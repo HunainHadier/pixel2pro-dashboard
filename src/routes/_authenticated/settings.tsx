@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AdminLayout } from "@/components/admin/admin-layout";
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,10 +11,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
 import { useSession } from "@/lib/auth";
-import { useTheme } from "@/lib/theme";
 import { supabaseRequest } from "@/lib/supabase";
 import { toast } from "sonner";
-import { Database, HardDriveDownload, HardDriveUpload, Upload, Moon, Sun } from "lucide-react";
+import { Database, HardDriveDownload, HardDriveUpload, Image as ImageIcon, Megaphone, Plus, Upload, X } from "lucide-react";
+import { Spinner } from "@/components/admin/spinner";
 
 export const Route = createFileRoute("/_authenticated/settings")({
   head: () => ({ meta: [{ title: "Settings — Pixel2Pro Admin" }] }),
@@ -23,8 +23,7 @@ export const Route = createFileRoute("/_authenticated/settings")({
 
 function SettingsPage() {
   const { session } = useSession();
-  const { theme, set } = useTheme();
-  const [notify, setNotify] = useState({ admissions: true, payments: true, reviews: false, failures: true });
+  const [notify, setNotify] = useState({ admissions: true });
 
   const [profile, setProfile] = useState({
     name: session?.name || "",
@@ -36,24 +35,204 @@ function SettingsPage() {
   const [passwords, setPasswords] = useState({ current: "", newPass: "", confirm: "" });
   const [passwordSaving, setPasswordSaving] = useState(false);
 
-  const [website, setWebsite] = useState({
-    name: "Pixel2Pro",
-    tagline: "Pixel Today, Pro Tomorrow",
-    description: "Pixel2Pro turns focused learners into job-ready builders through cohort-based tracks and verified credentials.",
+  const [banner, setBanner] = useState({
+    ai_banner_enabled: true,
+    ai_banner_link: "https://chat.whatsapp.com/Js9TVHNxeNCAEznLzzqjUy?s=sh&p=a&mlu=4&ilr=4",
+    ai_banner_text: "Join our free AI awareness session on WhatsApp.",
+    ai_banner_subtext:
+      "Get the AI awareness session schedule and joining link directly on WhatsApp. Tap the button to reserve your free spot.",
   });
-  const [websiteSaving, setWebsiteSaving] = useState(false);
+  const [bannerLoaded, setBannerLoaded] = useState(false);
+  const [bannerSaving, setBannerSaving] = useState(false);
 
-  const [paymentSettings, setPaymentSettings] = useState({ jazzcash: "", easypaisa: "", bank: "", iban: "" });
-  const [paymentSaving, setPaymentSaving] = useState(false);
+  const [hero, setHero] = useState<{ hero_images: string[]; hero_video: string }>({
+    hero_images: [],
+    hero_video: "",
+  });
+  const [heroLoaded, setHeroLoaded] = useState(false);
+  const [heroUploading, setHeroUploading] = useState(false);
+  const heroImagesRef = useRef<string[]>([]);
 
-  const [whatsapp, setWhatsapp] = useState({ number: "", token: "", message: "Welcome to Pixel2Pro! Your admission is confirmed. See you in class." });
-  const [whatsappSaving, setWhatsappSaving] = useState(false);
+  const loadFromStorage = <T,>(key: string, fallback: T): T => {
+    try {
+      const raw = localStorage.getItem(`p2p_settings_${key}`);
+      if (!raw) return fallback;
+      const parsed = JSON.parse(raw);
+      for (const k in parsed) if (parsed[k] !== undefined) (fallback as Record<string, unknown>)[k] = parsed[k];
+      return fallback;
+    } catch {
+      return fallback;
+    }
+  };
 
-  const [smtp, setSmtp] = useState({ host: "", port: "", username: "", password: "" });
-  const [smtpSaving, setSmtpSaving] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  if (!loaded && typeof window !== "undefined") {
+    setProfile(loadFromStorage("profile", profile));
+    setNotify(loadFromStorage("notifications", notify));
+    setLoaded(true);
+  }
+
+  useEffect(() => {
+    if (heroLoaded) return;
+    supabaseRequest<{ hero_images: string[]; hero_video: string }[]>(
+      "/rest/v1/site_settings?select=hero_images,hero_video&limit=1",
+    )
+      .then((rows) => {
+        const row = rows?.[0];
+        if (row) {
+          const imgs = Array.isArray(row.hero_images) ? row.hero_images : [];
+          heroImagesRef.current = imgs;
+          setHero({
+            hero_images: imgs,
+            hero_video: row.hero_video || "",
+          });
+        }
+      })
+      .catch(() => {
+        toast.error("Failed to load home hero settings");
+      })
+      .finally(() => setHeroLoaded(true));
+  }, [heroLoaded]);
+
+  const readFileAsDataUrl = (file: File) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+
+  const persistHeroImages = async (imgs: string[]) => {
+    heroImagesRef.current = imgs;
+    const rows = await supabaseRequest<{ hero_images: string[]; hero_video: string }[]>(
+      "/rest/v1/site_settings?id=eq.default",
+      {
+        method: "PATCH",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({ hero_images: imgs }),
+      },
+    );
+    const saved = Array.isArray(rows?.[0]?.hero_images) ? rows[0].hero_images : imgs;
+    heroImagesRef.current = saved;
+    setHero((h) => ({ ...h, hero_images: saved }));
+  };
+
+  const compressImage = (file: File) =>
+    new Promise<string>((resolve, reject) => {
+      readFileAsDataUrl(file)
+        .then((dataUrl) => {
+          const img = new Image();
+          img.onload = () => {
+            const MAX = 1200;
+            const scale = Math.min(1, MAX / Math.max(img.width, img.height));
+            const w = Math.max(1, Math.round(img.width * scale));
+            const h = Math.max(1, Math.round(img.height * scale));
+            const canvas = document.createElement("canvas");
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext("2d");
+            if (!ctx) return resolve(dataUrl);
+            ctx.drawImage(img, 0, 0, w, h);
+            resolve(canvas.toDataURL("image/jpeg", 0.8));
+          };
+          img.onerror = () => resolve(dataUrl);
+          img.src = dataUrl;
+        })
+        .catch(reject);
+    });
+
+  const handleHeroImagesUpload = async (files: FileList | null) => {
+    if (!files || files.length === 0 || heroUploading) return;
+    const list = Array.from(files);
+    setHeroUploading(true);
+    try {
+      for (const file of list) {
+        const dataUrl = await compressImage(file);
+        await persistHeroImages([...heroImagesRef.current, dataUrl]);
+      }
+      toast.success(list.length === 1 ? "Hero image added" : `${list.length} hero images added`);
+    } catch {
+      toast.error("Failed to save hero image. Run migration-v6-hero-images.sql first.");
+    } finally {
+      setHeroUploading(false);
+    }
+  };
+
+  const handleHeroImageRemove = async (index: number) => {
+    try {
+      await persistHeroImages(heroImagesRef.current.filter((_, i) => i !== index));
+      toast.success("Hero image removed");
+    } catch {
+      toast.error("Failed to remove hero image");
+    }
+  };
+
+  const handleHeroSave = async () => {
+    setHeroUploading(true);
+    try {
+      await supabaseRequest("/rest/v1/site_settings?id=eq.default", {
+        method: "PATCH",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({ hero_video: hero.hero_video }),
+      });
+      toast.success("Home hero updated");
+    } catch {
+      toast.error("Failed to save home hero. Run migration-v6-hero-images.sql first.");
+    } finally {
+      setHeroUploading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (bannerLoaded) return;
+    supabaseRequest<
+      {
+        ai_banner_enabled: boolean;
+        ai_banner_link: string;
+        ai_banner_text: string;
+        ai_banner_subtext: string;
+      }[]
+    >("/rest/v1/site_settings?select=*&limit=1")
+      .then((rows) => {
+        const row = rows?.[0];
+        if (row) {
+          setBanner({
+            ai_banner_enabled: row.ai_banner_enabled,
+            ai_banner_link: row.ai_banner_link,
+            ai_banner_text: row.ai_banner_text,
+            ai_banner_subtext: row.ai_banner_subtext,
+          });
+        }
+      })
+      .catch(() => {
+        toast.error("Failed to load banner settings");
+      })
+      .finally(() => setBannerLoaded(true));
+  }, [bannerLoaded]);
 
   const saveToStorage = (key: string, data: Record<string, unknown>) => {
     localStorage.setItem(`p2p_settings_${key}`, JSON.stringify(data));
+  };
+
+  const handleBannerSave = async () => {
+    setBannerSaving(true);
+    try {
+      await supabaseRequest("/rest/v1/site_settings?id=eq.default", {
+        method: "PATCH",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({
+          ai_banner_enabled: banner.ai_banner_enabled,
+          ai_banner_link: banner.ai_banner_link,
+          ai_banner_text: banner.ai_banner_text,
+          ai_banner_subtext: banner.ai_banner_subtext,
+        }),
+      });
+      toast.success("Website banner updated");
+    } catch {
+      toast.error("Failed to save banner. Run migration-v4-site-settings.sql first.");
+    } finally {
+      setBannerSaving(false);
+    }
   };
 
   const handlePasswordChange = async () => {
@@ -85,16 +264,13 @@ function SettingsPage() {
   };
 
   return (
-    <AdminLayout title="Settings" subtitle="Portal, notifications, integrations, and maintenance.">
+    <AdminLayout title="Settings" subtitle="Portal, notifications, and maintenance.">
       <Tabs defaultValue="profile" className="w-full">
         <TabsList className="w-full flex-wrap justify-start rounded-xl gap-1">
           <TabsTrigger value="profile" className="text-xs">Profile</TabsTrigger>
           <TabsTrigger value="password" className="text-xs">Password</TabsTrigger>
-          <TabsTrigger value="website" className="text-xs">Website</TabsTrigger>
-          <TabsTrigger value="payments" className="text-xs">Payment</TabsTrigger>
-          <TabsTrigger value="whatsapp" className="text-xs">WhatsApp</TabsTrigger>
-          <TabsTrigger value="email" className="text-xs">Email</TabsTrigger>
-          <TabsTrigger value="appearance" className="text-xs">Theme</TabsTrigger>
+          <TabsTrigger value="banner" className="text-xs">Banner</TabsTrigger>
+          <TabsTrigger value="hero" className="text-xs">Home Hero</TabsTrigger>
           <TabsTrigger value="notifications" className="text-xs">Notify</TabsTrigger>
           <TabsTrigger value="backup" className="text-xs">Backup</TabsTrigger>
         </TabsList>
@@ -118,7 +294,7 @@ function SettingsPage() {
                 saveToStorage("profile", profile);
                 toast.success("Profile updated");
                 setProfileSaving(false);
-              }} disabled={profileSaving}>{profileSaving ? "Saving…" : "Save"}</Button>
+              }} disabled={profileSaving}>{profileSaving ? <><Spinner className="mr-1.5 h-4 w-4" /> Saving…</> : "Save"}</Button>
             </CardContent>
           </Card>
         </TabsContent>
@@ -131,97 +307,62 @@ function SettingsPage() {
                 <div><Label>New</Label><Input type="password" value={passwords.newPass} onChange={e => setPasswords({ ...passwords, newPass: e.target.value })} /></div>
                 <div><Label>Confirm</Label><Input type="password" value={passwords.confirm} onChange={e => setPasswords({ ...passwords, confirm: e.target.value })} /></div>
               </div>
-              <Button size="sm" onClick={handlePasswordChange} disabled={passwordSaving}>{passwordSaving ? "Updating…" : "Update"}</Button>
+              <Button size="sm" onClick={handlePasswordChange} disabled={passwordSaving}>{passwordSaving ? <><Spinner className="mr-1.5 h-4 w-4" /> Updating…</> : "Update"}</Button>
             </CardContent>
           </Card>
         </TabsContent>
 
-        <TabsContent value="website" className="mt-4">
-          <Card className="rounded-2xl"><CardHeader><CardTitle>Website Settings</CardTitle><CardDescription>Public site branding and metadata.</CardDescription></CardHeader>
+        <TabsContent value="banner" className="mt-4">
+          <Card className="rounded-2xl"><CardHeader><CardTitle className="flex items-center gap-2"><Megaphone className="h-4 w-4" /> Website Banner</CardTitle><CardDescription>AI Awareness Session strip shown across the website. Design stays fixed — content and visibility are controlled here.</CardDescription></CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div><Label>Site name</Label><Input value={website.name} onChange={e => setWebsite({ ...website, name: e.target.value })} /></div>
-                <div><Label>Tagline</Label><Input value={website.tagline} onChange={e => setWebsite({ ...website, tagline: e.target.value })} /></div>
-                <div className="sm:col-span-2"><Label>Description</Label><Textarea rows={3} value={website.description} onChange={e => setWebsite({ ...website, description: e.target.value })} /></div>
-                <div><Label>Logo</Label><Input type="file" /></div>
-                <div><Label>Favicon</Label><Input type="file" /></div>
-              </div>
-              <Button size="sm" onClick={() => {
-                setWebsiteSaving(true);
-                saveToStorage("website", website);
-                toast.success("Website settings saved");
-                setWebsiteSaving(false);
-              }} disabled={websiteSaving}>{websiteSaving ? "Saving…" : "Save"}</Button>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="payments" className="mt-4">
-          <Card className="rounded-2xl"><CardHeader><CardTitle>Payment Settings</CardTitle></CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div><Label>JazzCash account</Label><Input placeholder="03xx-xxxxxxx" value={paymentSettings.jazzcash} onChange={e => setPaymentSettings({ ...paymentSettings, jazzcash: e.target.value })} /></div>
-                <div><Label>EasyPaisa account</Label><Input placeholder="03xx-xxxxxxx" value={paymentSettings.easypaisa} onChange={e => setPaymentSettings({ ...paymentSettings, easypaisa: e.target.value })} /></div>
-                <div><Label>Bank name</Label><Input placeholder="Meezan Bank" value={paymentSettings.bank} onChange={e => setPaymentSettings({ ...paymentSettings, bank: e.target.value })} /></div>
-                <div><Label>IBAN</Label><Input placeholder="PK00 XXXX XXXXXXXX" value={paymentSettings.iban} onChange={e => setPaymentSettings({ ...paymentSettings, iban: e.target.value })} /></div>
-              </div>
-              <Button size="sm" onClick={() => {
-                setPaymentSaving(true);
-                saveToStorage("payments", paymentSettings);
-                toast.success("Payment settings saved");
-                setPaymentSaving(false);
-              }} disabled={paymentSaving}>{paymentSaving ? "Saving…" : "Save"}</Button>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="whatsapp" className="mt-4">
-          <Card className="rounded-2xl"><CardHeader><CardTitle>WhatsApp Settings</CardTitle></CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div><Label>Business number</Label><Input placeholder="+92 …" value={whatsapp.number} onChange={e => setWhatsapp({ ...whatsapp, number: e.target.value })} /></div>
-                <div><Label>API token</Label><Input type="password" placeholder="•••••" value={whatsapp.token} onChange={e => setWhatsapp({ ...whatsapp, token: e.target.value })} /></div>
-                <div className="sm:col-span-2"><Label>Default admission message</Label><Textarea rows={3} value={whatsapp.message} onChange={e => setWhatsapp({ ...whatsapp, message: e.target.value })} /></div>
-              </div>
-              <Button size="sm" onClick={() => {
-                setWhatsappSaving(true);
-                saveToStorage("whatsapp", whatsapp);
-                toast.success("WhatsApp settings saved");
-                setWhatsappSaving(false);
-              }} disabled={whatsappSaving}>{whatsappSaving ? "Saving…" : "Save"}</Button>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="email" className="mt-4">
-          <Card className="rounded-2xl"><CardHeader><CardTitle>Email (SMTP) Settings</CardTitle></CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div><Label>SMTP Host</Label><Input placeholder="smtp.gmail.com" value={smtp.host} onChange={e => setSmtp({ ...smtp, host: e.target.value })} /></div>
-                <div><Label>Port</Label><Input placeholder="587" value={smtp.port} onChange={e => setSmtp({ ...smtp, port: e.target.value })} /></div>
-                <div><Label>Username</Label><Input placeholder="noreply@pixel2pro.com" value={smtp.username} onChange={e => setSmtp({ ...smtp, username: e.target.value })} /></div>
-                <div><Label>Password</Label><Input type="password" placeholder="•••••" value={smtp.password} onChange={e => setSmtp({ ...smtp, password: e.target.value })} /></div>
-              </div>
-              <Button size="sm" onClick={() => {
-                setSmtpSaving(true);
-                saveToStorage("smtp", smtp);
-                toast.success("Email settings saved");
-                setSmtpSaving(false);
-              }} disabled={smtpSaving}>{smtpSaving ? "Saving…" : "Save"}</Button>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="appearance" className="mt-4">
-          <Card className="rounded-2xl"><CardHeader><CardTitle>Appearance</CardTitle><CardDescription>Portal theme.</CardDescription></CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between rounded-xl border border-border p-4">
                 <div>
-                  <div className="font-medium">Dark mode</div>
-                  <div className="text-xs text-muted-foreground">Toggle between light and dark themes.</div>
+                  <div className="font-medium">Show banner on website</div>
+                  <div className="text-xs text-muted-foreground">Turn off to hide the WhatsApp session strip entirely.</div>
                 </div>
-                <div className="flex items-center gap-2"><Sun className="h-4 w-4" /><Switch checked={theme === "dark"} onCheckedChange={v => set(v ? "dark" : "light")} /><Moon className="h-4 w-4" /></div>
+                <Switch checked={banner.ai_banner_enabled} onCheckedChange={v => setBanner({ ...banner, ai_banner_enabled: v })} />
               </div>
+              <div><Label>Button / link (WhatsApp group)</Label><Input value={banner.ai_banner_link} onChange={e => setBanner({ ...banner, ai_banner_link: e.target.value })} /></div>
+              <div><Label>Heading text</Label><Input value={banner.ai_banner_text} onChange={e => setBanner({ ...banner, ai_banner_text: e.target.value })} /></div>
+              <div><Label>Sub text</Label><Textarea rows={3} value={banner.ai_banner_subtext} onChange={e => setBanner({ ...banner, ai_banner_subtext: e.target.value })} /></div>
+              <Button size="sm" onClick={handleBannerSave} disabled={bannerSaving || !bannerLoaded}>{bannerSaving ? <><Spinner className="mr-1.5 h-4 w-4" /> Saving…</> : "Save"}</Button>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="hero" className="mt-4">
+          <Card className="rounded-2xl"><CardHeader><CardTitle className="flex items-center gap-2"><ImageIcon className="h-4 w-4" /> Home Hero — Media</CardTitle><CardDescription>Upload images shown in the home hero section. Multiple images rotate automatically. Leave empty to fall back to the default video.</CardDescription></CardHeader>
+            <CardContent className="space-y-4">
+              <div>
+                <Label>Hero images <span className="text-muted-foreground font-normal">— one image at a time (adds immediately)</span></Label>
+                <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {hero.hero_images.map((src, i) => (
+                    <div key={`${i}-${src.slice(-20)}`} className="group relative overflow-hidden rounded-xl border border-border">
+                      <img src={src} alt={`Hero image ${i + 1}`} className="h-36 w-full object-cover" />
+                      <button
+                        type="button"
+                        disabled={heroUploading}
+                        aria-label={`Remove image ${i + 1}`}
+                        onClick={() => handleHeroImageRemove(i)}
+                        className="absolute right-2 top-2 rounded-full bg-black/60 p-1 text-white opacity-0 transition group-hover:opacity-100 disabled:opacity-30"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                      {heroUploading && (
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+                          <Spinner className="h-5 w-5 text-white" />
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  <label className={`flex h-36 items-center justify-center rounded-xl border-2 border-dashed transition ${heroUploading ? "pointer-events-none border-border opacity-40" : "cursor-pointer border-border text-muted-foreground hover:border-primary hover:text-primary"}`}>
+                    {heroUploading ? <Spinner className="h-6 w-6" /> : <Plus className="h-6 w-6" />}
+                    <input type="file" accept="image/*" multiple className="hidden" disabled={heroUploading} onChange={e => { handleHeroImagesUpload(e.target.files); e.target.value = ""; }} />
+                  </label>
+                </div>
+              </div>
+              <div><Label>Hero video URL <span className="text-muted-foreground font-normal">— optional, used only when no images are set</span></Label><Input placeholder="https://…/hero.mp4" value={hero.hero_video} onChange={e => setHero(h => ({ ...h, hero_video: e.target.value }))} /></div>
+              <Button size="sm" onClick={handleHeroSave} disabled={heroUploading || !heroLoaded}>{heroUploading ? <><Spinner className="mr-1.5 h-4 w-4" /> Uploading…</> : "Save"}</Button>
             </CardContent>
           </Card>
         </TabsContent>
@@ -229,22 +370,15 @@ function SettingsPage() {
         <TabsContent value="notifications" className="mt-4">
           <Card className="rounded-2xl"><CardHeader><CardTitle>Notification Settings</CardTitle></CardHeader>
             <CardContent className="divide-y">
-              {[
-                { key: "admissions", label: "New admissions", desc: "Bell + email on every new applicant." },
-                { key: "payments", label: "New payments", desc: "Notify me on every incoming payment." },
-                { key: "reviews", label: "New reviews", desc: "Alerts for reviews pending moderation." },
-                { key: "failures", label: "Failed payments", desc: "Critical alerts for failed transactions." },
-              ].map(row => (
-                <div key={row.key} className="flex items-center justify-between py-3">
-                  <div><div className="font-medium">{row.label}</div><div className="text-xs text-muted-foreground">{row.desc}</div></div>
-                  <Switch checked={(notify as never)[row.key]} onCheckedChange={v => {
-                    const next = { ...notify, [row.key]: v };
-                    setNotify(next);
-                    saveToStorage("notifications", next);
-                    toast.success("Notification settings updated");
-                  }} />
-                </div>
-              ))}
+              <div className="flex items-center justify-between py-3">
+                <div><div className="font-medium">New admissions</div><div className="text-xs text-muted-foreground">Bell + email on every new applicant.</div></div>
+                <Switch checked={notify.admissions} onCheckedChange={v => {
+                  const next = { admissions: v };
+                  setNotify(next);
+                  saveToStorage("notifications", next);
+                  toast.success("Notification settings updated");
+                }} />
+              </div>
             </CardContent>
           </Card>
         </TabsContent>

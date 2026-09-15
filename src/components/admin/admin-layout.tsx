@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
 import {
   LayoutDashboard,
   Users,
@@ -31,6 +32,8 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { clearSession, useSession } from "@/lib/auth";
 import { useTheme } from "@/lib/theme";
+import { api } from "@/services/api";
+import { formatPKR } from "@/lib/mock-data";
 import { toast } from "sonner";
 
 const nav = [
@@ -46,14 +49,80 @@ const nav = [
 function Logo() {
   return (
     <div className="flex items-center gap-2.5">
-      <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary text-primary-foreground font-black text-sm shadow-sm">
-        P2
-      </div>
+      <img src="/logo.png" alt="Pixel2Pro" className="h-9 w-9 shrink-0 rounded-xl bg-white object-contain p-1 shadow-sm" />
       <div className="min-w-0 leading-tight">
         <div className="truncate font-black tracking-tight">PIXEL2PRO</div>
         <div className="truncate text-[10px] uppercase tracking-widest text-muted-foreground">Admin Portal</div>
       </div>
     </div>
+  );
+}
+
+function NotificationsBell() {
+  const { data } = useQuery({ queryKey: ["dashboard"], queryFn: () => api.dashboard(), refetchInterval: 30000 });
+  const students = data?.students ?? [];
+  const payments = data?.payments ?? [];
+  const reviews = data?.reviews ?? [];
+
+  const admissions = students.filter((s) => s.admissionStatus === "pending");
+  const pending = payments.filter((p) => p.status === "pending");
+  const pendingReviews = reviews.filter((r) => r.status === "pending");
+  const count = admissions.length + pending.length + pendingReviews.length;
+
+  const items = [
+    ...admissions.map((s) => ({
+      key: `adm-${s.id}`,
+      href: "/students" as const,
+      title: "New admission pending",
+      detail: `${s.name} — ${s.courseName}`,
+    })),
+    ...pending.map((p) => ({
+      key: `pay-${p.id}`,
+      href: "/payments" as const,
+      title: "Payment awaiting verification",
+      detail: `${formatPKR(p.amount)} — ${p.studentName}`,
+    })),
+    ...pendingReviews.map((r) => ({
+      key: `rev-${r.id}`,
+      href: "/reviews" as const,
+      title: `New ${r.rating}★ review`,
+      detail: r.courseName,
+    })),
+  ].slice(0, 8);
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon" className="relative shrink-0">
+          <Bell className="h-4 w-4" />
+          {count > 0 && (
+            <Badge className="absolute -right-1 -top-1 h-4 min-w-4 rounded-full p-0 px-1 text-[10px]">{count}</Badge>
+          )}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-80 max-w-[calc(100vw-2rem)]">
+        <DropdownMenuLabel>Notifications</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {items.length === 0 ? (
+          <div className="px-3 py-6 text-center text-sm text-muted-foreground">You're all caught up.</div>
+        ) : items.map((item) => (
+          <DropdownMenuItem asChild key={item.key} className="flex-col items-start gap-0.5">
+            <Link to={item.href}>
+              <span className="text-sm font-medium">{item.title}</span>
+              <span className="text-xs text-muted-foreground">{item.detail}</span>
+            </Link>
+          </DropdownMenuItem>
+        ))}
+        {count > items.length && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem className="justify-center text-xs text-muted-foreground">
+              {count - items.length} more…
+            </DropdownMenuItem>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -124,7 +193,7 @@ export function AdminLayout({ children, title, subtitle }: { children: ReactNode
       )}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex h-16 items-center gap-2 border-b border-border bg-background/80 px-3 backdrop-blur-md sm:px-4 sm:gap-3">
+        <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-border bg-background/80 px-3 backdrop-blur-md sm:h-16 sm:px-4 sm:gap-3">
           <Button variant="ghost" size="icon" className="lg:hidden shrink-0" onClick={() => setMobileOpen(o => !o)}>
             {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </Button>
@@ -151,22 +220,7 @@ export function AdminLayout({ children, title, subtitle }: { children: ReactNode
               {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </Button>
 
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="relative shrink-0">
-                  <Bell className="h-4 w-4" />
-                  <Badge className="absolute -right-1 -top-1 h-4 min-w-4 rounded-full p-0 px-1 text-[10px]">4</Badge>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-80 max-w-[calc(100vw-2rem)]">
-                <DropdownMenuLabel>Notifications</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem className="flex-col items-start gap-0.5"><span className="text-sm font-medium">New admission pending</span><span className="text-xs text-muted-foreground">Fatima Malik — MERN Full-Stack</span></DropdownMenuItem>
-                <DropdownMenuItem className="flex-col items-start gap-0.5"><span className="text-sm font-medium">Payment verified</span><span className="text-xs text-muted-foreground">PKR 45,000 — Hassan Ali</span></DropdownMenuItem>
-                <DropdownMenuItem className="flex-col items-start gap-0.5"><span className="text-sm font-medium">New 5★ review</span><span className="text-xs text-muted-foreground">AI Coding with Cursor</span></DropdownMenuItem>
-                <DropdownMenuItem className="flex-col items-start gap-0.5"><span className="text-sm font-medium">Failed payment</span><span className="text-xs text-muted-foreground">JazzCash — retry required</span></DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <NotificationsBell />
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -193,7 +247,7 @@ export function AdminLayout({ children, title, subtitle }: { children: ReactNode
           </div>
         </header>
 
-        <main className="min-w-0 flex-1 p-4 sm:p-6 lg:p-8">{children}</main>
+        <main className="min-w-0 flex-1 p-3 sm:p-6 lg:p-8">{children}</main>
       </div>
     </div>
   );

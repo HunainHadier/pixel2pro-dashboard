@@ -15,9 +15,28 @@ export interface Course {
   status: "published" | "draft";
   description: string;
   thumbnail?: string;
+  imageUrl?: string;
+  showOnHome?: boolean;
+  homeOrder?: number;
   students: number;
   revenue: number;
   completionRate: number;
+  classesPerWeek: number;
+  hoursPerClass: number;
+  admissionFee?: number;
+  monthlyFee: number;
+  track?: string;
+  programName?: string;
+  sessions?: string;
+  instructor?: string;
+  instructorRole?: string;
+  overview?: string;
+  outcomes?: string[];
+  tools?: string[];
+  industryTrends?: string[];
+  curriculum?: { week: string; title: string; lessons: string[] }[];
+  impactHeadline?: string;
+  impactMetrics?: { value: string; label: string }[];
 }
 
 export interface Student {
@@ -34,6 +53,8 @@ export interface Student {
   feeStatus: FeeStatus;
   totalFee: number;
   paidAmount: number;
+  courseMonthlyFee?: number;
+  courseMonths?: number;
   governmentId?: string;
   professionalProfile?: string;
   termsAccepted: boolean;
@@ -50,12 +71,16 @@ export interface Payment {
   courseName: string;
   totalFee: number;
   paidAmount: number;
+  courseMonthlyFee?: number;
+  courseMonths?: number;
   amount: number;
   paymentDate: string;
   paymentMethod: PaymentMethod;
   transactionId: string;
   status: PaymentStatus;
   screenshotUrl?: string;
+  slipUrl?: string;
+  paymentType: "admission" | "monthly";
 }
 
 export interface Review {
@@ -65,6 +90,7 @@ export interface Review {
   courseName: string;
   rating: number;
   message: string;
+  videoUrl?: string;
   submittedAt: string;
   status: ReviewStatus;
   pinned?: boolean;

@@ -80,10 +80,17 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { title: "Pixel2Pro Admin Portal" },
-      { name: "description", content: "Secure admin dashboard for Pixel2Pro — manage students, admissions, payments, courses, and reviews." },
+      {
+        name: "description",
+        content:
+          "Secure admin dashboard for Pixel2Pro — manage students, admissions, payments, courses, and reviews.",
+      },
       { name: "author", content: "Pixel2Pro" },
       { property: "og:title", content: "Pixel2Pro Admin Portal" },
-      { property: "og:description", content: "Manage students, admissions, payments, courses, and reviews." },
+      {
+        property: "og:description",
+        content: "Manage students, admissions, payments, courses, and reviews.",
+      },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
     ],
@@ -94,7 +101,10 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       },
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
       { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
-      { rel: "stylesheet", href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" },
+      {
+        rel: "stylesheet",
+        href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap",
+      },
       { rel: "icon", href: "/favicon.ico", type: "image/x-icon" },
     ],
   }),
@@ -120,6 +130,17 @@ function RootShell({ children }: { children: ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+
+  useEffect(() => {
+    const handler = (e: ErrorEvent) => {
+      if (e.message?.includes("ResizeObserver") || e.message?.includes("startTime")) {
+        e.stopImmediatePropagation();
+        e.preventDefault();
+      }
+    };
+    window.addEventListener("error", handler);
+    return () => window.removeEventListener("error", handler);
+  }, []);
 
   return (
     <QueryClientProvider client={queryClient}>

@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Wallet,
@@ -29,12 +30,15 @@ import {
 import { AdminLayout } from "@/components/admin/admin-layout";
 import { StatCard } from "@/components/admin/stat-card";
 import { StatusBadge } from "@/components/admin/badges";
+import { AddStudentDialog } from "@/components/admin/add-student-dialog";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { api } from "@/services/api";
 import { formatPKR, formatDate } from "@/lib/mock-data";
+import { SafeChart } from "@/components/safe-chart";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   head: () => ({ meta: [{ title: "Dashboard — Pixel2Pro Admin" }] }),
@@ -45,6 +49,7 @@ const PIE_COLORS = ["hsl(142 72% 45%)", "hsl(45 93% 55%)", "hsl(0 84% 60%)"];
 
 function DashboardPage() {
   const { data, isLoading } = useQuery({ queryKey: ["dashboard"], queryFn: () => api.dashboard() });
+  const [addOpen, setAddOpen] = useState(false);
   const metrics = data?.metrics;
   const activities = data?.activities ?? [];
   const students = data?.students ?? [];
@@ -89,19 +94,27 @@ function DashboardPage() {
       return pd.getMonth() === lastMonth.getMonth() && pd.getFullYear() === lastMonth.getFullYear();
     })
     .reduce((sum, p) => sum + p.amount, 0);
-  const revenueTrendPct = prevMonthRevenue > 0
-    ? (((metrics?.monthlyRevenue ?? 0) - prevMonthRevenue) / prevMonthRevenue * 100).toFixed(1)
-    : "0";
+  const revenueTrendPct =
+    prevMonthRevenue > 0
+      ? ((((metrics?.monthlyRevenue ?? 0) - prevMonthRevenue) / prevMonthRevenue) * 100).toFixed(1)
+      : "0";
   const prevMonthStudents = students.filter((s) => {
     const sd = new Date(s.enrollmentDate);
     return sd.getMonth() === lastMonth.getMonth() && sd.getFullYear() === lastMonth.getFullYear();
   }).length;
-  const studentTrendPct = prevMonthStudents > 0
-    ? (((metrics?.totalStudents ?? 0) - prevMonthStudents) / prevMonthStudents * 100).toFixed(1)
-    : "0";
+  const studentTrendPct =
+    prevMonthStudents > 0
+      ? ((((metrics?.totalStudents ?? 0) - prevMonthStudents) / prevMonthStudents) * 100).toFixed(1)
+      : "0";
 
   return (
     <AdminLayout title="Dashboard" subtitle="A snapshot of your bootcamp — updated in real time.">
+      <div className="mb-4 flex items-center justify-end">
+        <Button size="sm" onClick={() => setAddOpen(true)} className="w-full sm:w-auto">
+          <UserPlus className="mr-1.5 h-4 w-4" /> Add Student
+        </Button>
+      </div>
+      <AddStudentDialog open={addOpen} onClose={() => setAddOpen(false)} courses={courses} />
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3">
         {isLoading || !metrics ? (
           Array.from({ length: 9 }).map((_, i) => <Skeleton key={i} className="h-28 rounded-2xl" />)
@@ -181,39 +194,45 @@ function DashboardPage() {
             </Badge>
           </CardHeader>
           <CardContent className="h-56 sm:h-64 lg:h-72">
-            <ResponsiveContainer>
-              <AreaChart data={revenueTrend}>
-                <defs>
-                  <linearGradient id="rev" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="hsl(var(--foreground))" stopOpacity={0.35} />
-                    <stop offset="100%" stopColor="hsl(var(--foreground))" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="4 4" vertical={false} />
-                <XAxis dataKey="month" stroke="currentColor" opacity={0.5} fontSize={11} />
-                <YAxis
-                  stroke="currentColor"
-                  opacity={0.5}
-                  fontSize={11}
-                  tickFormatter={(v) => `${(v / 100000).toFixed(0)}L`}
-                />
-                <Tooltip
-                  contentStyle={{
-                    background: "hsl(var(--popover))",
-                    borderRadius: 10,
-                    border: "1px solid hsl(var(--border))",
-                  }}
-                  formatter={(v: number) => formatPKR(v)}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="revenue"
-                  stroke="currentColor"
-                  strokeWidth={2}
-                  fill="url(#rev)"
-                />
-              </AreaChart>
-            </ResponsiveContainer>
+            <SafeChart>
+              <ResponsiveContainer>
+                <AreaChart data={revenueTrend}>
+                  <defs>
+                    <linearGradient id="rev" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="hsl(var(--foreground))" stopOpacity={0.35} />
+                      <stop offset="100%" stopColor="hsl(var(--foreground))" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid
+                    stroke="hsl(var(--border))"
+                    strokeDasharray="4 4"
+                    vertical={false}
+                  />
+                  <XAxis dataKey="month" stroke="currentColor" opacity={0.5} fontSize={11} />
+                  <YAxis
+                    stroke="currentColor"
+                    opacity={0.5}
+                    fontSize={11}
+                    tickFormatter={(v) => `${(v / 100000).toFixed(0)}L`}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      background: "hsl(var(--popover))",
+                      borderRadius: 10,
+                      border: "1px solid hsl(var(--border))",
+                    }}
+                    formatter={(v: number) => formatPKR(v)}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="revenue"
+                    stroke="currentColor"
+                    strokeWidth={2}
+                    fill="url(#rev)"
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </SafeChart>
           </CardContent>
         </Card>
 
@@ -223,30 +242,32 @@ function DashboardPage() {
             <CardDescription>Verification split.</CardDescription>
           </CardHeader>
           <CardContent className="h-56 sm:h-64 lg:h-72">
-            <ResponsiveContainer>
-              <PieChart>
-                <Pie
-                  data={paymentStatusData}
-                  dataKey="value"
-                  nameKey="name"
-                  innerRadius={55}
-                  outerRadius={90}
-                  paddingAngle={3}
-                >
-                  {paymentStatusData.map((_, i) => (
-                    <Cell key={i} fill={PIE_COLORS[i]} />
-                  ))}
-                </Pie>
-                <Legend />
-                <Tooltip
-                  contentStyle={{
-                    background: "hsl(var(--popover))",
-                    borderRadius: 10,
-                    border: "1px solid hsl(var(--border))",
-                  }}
-                />
-              </PieChart>
-            </ResponsiveContainer>
+            <SafeChart>
+              <ResponsiveContainer>
+                <PieChart>
+                  <Pie
+                    data={paymentStatusData}
+                    dataKey="value"
+                    nameKey="name"
+                    innerRadius={55}
+                    outerRadius={90}
+                    paddingAngle={3}
+                  >
+                    {paymentStatusData.map((_, i) => (
+                      <Cell key={i} fill={PIE_COLORS[i]} />
+                    ))}
+                  </Pie>
+                  <Legend />
+                  <Tooltip
+                    contentStyle={{
+                      background: "hsl(var(--popover))",
+                      borderRadius: 10,
+                      border: "1px solid hsl(var(--border))",
+                    }}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
+            </SafeChart>
           </CardContent>
         </Card>
       </div>
@@ -258,21 +279,27 @@ function DashboardPage() {
             <CardDescription>New enrollments per month.</CardDescription>
           </CardHeader>
           <CardContent className="h-48 sm:h-56 lg:h-64">
-            <ResponsiveContainer>
-              <BarChart data={revenueTrend}>
-                <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="4 4" vertical={false} />
-                <XAxis dataKey="month" stroke="currentColor" opacity={0.5} fontSize={11} />
-                <YAxis stroke="currentColor" opacity={0.5} fontSize={11} />
-                <Tooltip
-                  contentStyle={{
-                    background: "hsl(var(--popover))",
-                    borderRadius: 10,
-                    border: "1px solid hsl(var(--border))",
-                  }}
-                />
-                <Bar dataKey="enrollments" fill="currentColor" radius={[8, 8, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+            <SafeChart>
+              <ResponsiveContainer>
+                <BarChart data={revenueTrend}>
+                  <CartesianGrid
+                    stroke="hsl(var(--border))"
+                    strokeDasharray="4 4"
+                    vertical={false}
+                  />
+                  <XAxis dataKey="month" stroke="currentColor" opacity={0.5} fontSize={11} />
+                  <YAxis stroke="currentColor" opacity={0.5} fontSize={11} />
+                  <Tooltip
+                    contentStyle={{
+                      background: "hsl(var(--popover))",
+                      borderRadius: 10,
+                      border: "1px solid hsl(var(--border))",
+                    }}
+                  />
+                  <Bar dataKey="enrollments" fill="currentColor" radius={[8, 8, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </SafeChart>
           </CardContent>
         </Card>
 
@@ -282,32 +309,34 @@ function DashboardPage() {
             <CardDescription>Enrollment distribution.</CardDescription>
           </CardHeader>
           <CardContent className="h-48 sm:h-56 lg:h-64">
-            <ResponsiveContainer>
-              <BarChart data={courseWiseStudents} layout="vertical" margin={{ left: 20 }}>
-                <CartesianGrid
-                  stroke="hsl(var(--border))"
-                  strokeDasharray="4 4"
-                  horizontal={false}
-                />
-                <XAxis type="number" stroke="currentColor" opacity={0.5} fontSize={11} />
-                <YAxis
-                  type="category"
-                  dataKey="name"
-                  width={90}
-                  stroke="currentColor"
-                  opacity={0.7}
-                  fontSize={11}
-                />
-                <Tooltip
-                  contentStyle={{
-                    background: "hsl(var(--popover))",
-                    borderRadius: 10,
-                    border: "1px solid hsl(var(--border))",
-                  }}
-                />
-                <Bar dataKey="students" fill="currentColor" radius={[0, 8, 8, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+            <SafeChart>
+              <ResponsiveContainer>
+                <BarChart data={courseWiseStudents} layout="vertical" margin={{ left: 20 }}>
+                  <CartesianGrid
+                    stroke="hsl(var(--border))"
+                    strokeDasharray="4 4"
+                    horizontal={false}
+                  />
+                  <XAxis type="number" stroke="currentColor" opacity={0.5} fontSize={11} />
+                  <YAxis
+                    type="category"
+                    dataKey="name"
+                    width={90}
+                    stroke="currentColor"
+                    opacity={0.7}
+                    fontSize={11}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      background: "hsl(var(--popover))",
+                      borderRadius: 10,
+                      border: "1px solid hsl(var(--border))",
+                    }}
+                  />
+                  <Bar dataKey="students" fill="currentColor" radius={[0, 8, 8, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </SafeChart>
           </CardContent>
         </Card>
       </div>

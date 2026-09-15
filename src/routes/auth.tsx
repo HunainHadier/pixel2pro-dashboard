@@ -58,9 +58,7 @@ function AuthPage() {
           }}
         />
         <div className="relative flex items-center gap-3">
-          <div className="grid h-11 w-11 place-items-center rounded-xl bg-white text-primary font-black">
-            P2
-          </div>
+          <img src="/logo.png" alt="Pixel2Pro" className="h-11 w-11 rounded-xl bg-white object-contain p-1 shadow-sm" />
           <div>
             <div className="font-black tracking-tight text-lg">PIXEL2PRO</div>
             <div className="text-[10px] uppercase tracking-[0.25em] opacity-70">
@@ -107,9 +105,7 @@ function AuthPage() {
       <div className="flex items-center justify-center bg-background p-6 sm:p-10">
         <div className="w-full max-w-md">
           <div className="mb-8 flex items-center gap-2 lg:hidden">
-            <div className="grid h-10 w-10 place-items-center rounded-xl bg-primary text-primary-foreground font-black">
-              P2
-            </div>
+            <img src="/logo.png" alt="Pixel2Pro" className="h-10 w-10 rounded-xl bg-white object-contain p-1 shadow-sm" />
             <div className="font-black tracking-tight">PIXEL2PRO ADMIN</div>
           </div>
 

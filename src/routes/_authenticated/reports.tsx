@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Download, FileText, FileSpreadsheet, FileDown, Calendar } from "lucide-react";
+import { Download, FileDown, Calendar } from "lucide-react";
 import { AdminLayout } from "@/components/admin/admin-layout";
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -26,8 +26,35 @@ const reports = [
 ];
 
 function ReportsPage() {
-  const [from, setFrom] = useState("2026-01-01");
-  const [to, setTo] = useState("2026-12-31");
+  const computeDefaultRange = () => {
+    const now = new Date();
+    const from = new Date(now.getFullYear(), now.getMonth() - 11, 1);
+    const to = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const iso = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    return { from: iso(from), to: iso(to) };
+  };
+  const initialRange = computeDefaultRange();
+  const [from, setFrom] = useState(initialRange.from);
+  const [to, setTo] = useState(initialRange.to);
+
+  const applyPreset = (preset: "12m" | "year" | "month") => {
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const iso = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    if (preset === "12m") {
+      const d = computeDefaultRange();
+      setFrom(d.from);
+      setTo(d.to);
+    } else if (preset === "year") {
+      setFrom(`${now.getFullYear()}-01-01`);
+      setTo(`${now.getFullYear()}-12-31`);
+    } else {
+      setFrom(iso(new Date(now.getFullYear(), now.getMonth(), 1)));
+      setTo(iso(new Date(now.getFullYear(), now.getMonth() + 1, 0)));
+    }
+    toast.success("Date range applied");
+  };
 
   const { data: dashboardData } = useQuery({ queryKey: ["dashboard"], queryFn: () => api.dashboard() });
   const students = dashboardData?.students ?? [];
@@ -35,11 +62,13 @@ function ReportsPage() {
   const courses = dashboardData?.courses ?? [];
 
   const now = new Date();
+  const nowKey = `${now.getFullYear()}-${now.getMonth()}`;
 
   const revenueTrend = useMemo(() => {
     const months = [];
+    const ref = new Date();
     for (let i = 11; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const d = new Date(ref.getFullYear(), ref.getMonth() - i, 1);
       const monthPayments = payments.filter(p => {
         if (p.status !== "verified") return false;
         const pd = new Date(p.paymentDate);
@@ -55,7 +84,7 @@ function ReportsPage() {
       });
     }
     return months;
-  }, [payments, students, now]);
+  }, [payments, students, nowKey]);
 
   const courseWiseStudents = useMemo(() => courses.map(c => ({
     name: c.courseName.split(" ").slice(0, 2).join(" "),
@@ -65,11 +94,12 @@ function ReportsPage() {
   const filteredRevenueTrend = useMemo(() => {
     const fromDate = new Date(from);
     const toDate = new Date(to);
+    const ref = new Date();
     return revenueTrend.filter((_, i) => {
-      const monthDate = new Date(now.getFullYear(), now.getMonth() - 11 + i, 1);
+      const monthDate = new Date(ref.getFullYear(), ref.getMonth() - 11 + i, 1);
       return monthDate >= fromDate && monthDate <= toDate;
     });
-  }, [revenueTrend, from, to, now]);
+  }, [revenueTrend, from, to]);
 
   const exportReport = (type: string, reportTitle: string) => {
     let csv = "";
@@ -108,7 +138,11 @@ function ReportsPage() {
             <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-muted-foreground">To</label>
             <div className="relative"><Calendar className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" /><Input type="date" value={to} onChange={e => setTo(e.target.value)} className="pl-9" /></div>
           </div>
-          <Button onClick={() => toast.success("Date range applied")} className="sm:mb-0"><Download className="mr-1.5 h-4 w-4" /> Apply</Button>
+          <div className="flex flex-wrap items-end gap-2">
+            <Button variant="outline" size="sm" onClick={() => applyPreset("month")} className="sm:mb-0">This month</Button>
+            <Button variant="outline" size="sm" onClick={() => applyPreset("year")} className="sm:mb-0">This year</Button>
+            <Button size="sm" onClick={() => applyPreset("12m")} className="sm:mb-0"><Download className="mr-1.5 h-4 w-4" /> Last 12 months</Button>
+          </div>
         </div>
       </Card>
 
@@ -149,9 +183,7 @@ function ReportsPage() {
           <Card key={r.id} className="rounded-2xl">
             <CardHeader><CardTitle className="text-base">{r.title}</CardTitle><CardDescription>{r.desc}</CardDescription></CardHeader>
             <CardContent className="flex flex-wrap gap-2">
-              <Button size="sm" variant="outline" onClick={() => exportReport("PDF", r.title)}><FileText className="mr-1 h-3.5 w-3.5" /> PDF</Button>
-              <Button size="sm" variant="outline" onClick={() => exportReport("Excel", r.title)}><FileSpreadsheet className="mr-1 h-3.5 w-3.5" /> Excel</Button>
-              <Button size="sm" variant="outline" onClick={() => exportReport("CSV", r.title)}><FileDown className="mr-1 h-3.5 w-3.5" /> CSV</Button>
+              <Button size="sm" variant="outline" onClick={() => exportReport("CSV", r.title)}><FileDown className="mr-1 h-3.5 w-3.5" /> Export CSV</Button>
             </CardContent>
           </Card>
         ))}

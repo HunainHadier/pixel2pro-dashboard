@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Search, Star, CheckCircle2, XCircle, Trash2, Pin } from "lucide-react";
 import { AdminLayout } from "@/components/admin/admin-layout";
 import { StatusBadge } from "@/components/admin/badges";
+import { Spinner } from "@/components/admin/spinner";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,6 +28,7 @@ function ReviewsPage() {
   const [status, setStatus] = useState("all");
   const [sort, setSort] = useState("newest");
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   const list = useMemo(() => {
     let l = data ?? [];
@@ -38,9 +40,16 @@ function ReviewsPage() {
   }, [data, q, status, sort]);
 
   const act = async (label: string, id: string, patch: Record<string, unknown>) => {
-    await api.reviews.update(id, patch as never);
-    toast.success(label);
-    refetch();
+    setBusyId(id);
+    try {
+      await api.reviews.update(id, patch as never);
+      toast.success(label);
+      refetch();
+    } catch {
+      toast.error(`Failed: ${label}`);
+    } finally {
+      setBusyId(null);
+    }
   };
 
   const deleteMutation = useMutation({
@@ -102,11 +111,17 @@ function ReviewsPage() {
                 ))}
                 <span className="ml-2 text-xs text-muted-foreground">{formatDate(r.submittedAt)}</span>
               </div>
-              <p className="mt-3 text-sm leading-relaxed text-foreground/90">"{r.message}"</p>
+              {r.videoUrl ? (
+                <div className="mt-3 overflow-hidden rounded-xl border border-border bg-black">
+                  <video src={r.videoUrl} controls preload="none" className="aspect-video w-full" />
+                </div>
+              ) : (
+                <p className="mt-3 text-sm leading-relaxed text-foreground/90">"{r.message}"</p>
+              )}
               <div className="mt-3 flex flex-wrap gap-2">
-                <Button size="sm" variant="outline" onClick={() => act("Review approved", r.id, { status: "approved" })}><CheckCircle2 className="mr-1 h-3.5 w-3.5 text-emerald-500" /> Approve</Button>
-                <Button size="sm" variant="outline" onClick={() => act("Review rejected", r.id, { status: "rejected" })}><XCircle className="mr-1 h-3.5 w-3.5 text-rose-500" /> Reject</Button>
-                <Button size="sm" variant="outline" onClick={() => act(r.pinned ? "Unpinned" : "Pinned", r.id, { pinned: !r.pinned })}><Pin className="mr-1 h-3.5 w-3.5" /> {r.pinned ? "Unpin" : "Pin"}</Button>
+                <Button size="sm" variant="outline" disabled={busyId === r.id} onClick={() => act("Review approved", r.id, { status: "approved" })}>{busyId === r.id ? <Spinner className="mr-1 h-3.5 w-3.5 text-emerald-500" /> : <CheckCircle2 className="mr-1 h-3.5 w-3.5 text-emerald-500" />} Approve</Button>
+                <Button size="sm" variant="outline" disabled={busyId === r.id} onClick={() => act("Review rejected", r.id, { status: "rejected" })}>{busyId === r.id ? <Spinner className="mr-1 h-3.5 w-3.5 text-rose-500" /> : <XCircle className="mr-1 h-3.5 w-3.5 text-rose-500" />} Reject</Button>
+                <Button size="sm" variant="outline" disabled={busyId === r.id} onClick={() => act(r.pinned ? "Unpinned" : "Pinned", r.id, { pinned: !r.pinned })}>{busyId === r.id ? <Spinner className="mr-1 h-3.5 w-3.5" /> : <Pin className="mr-1 h-3.5 w-3.5" />} {r.pinned ? "Unpin" : "Pin"}</Button>
                 <Button size="sm" variant="ghost" onClick={() => setDeleteTarget({ id: r.id, name: r.studentName })}><Trash2 className="mr-1 h-3.5 w-3.5" /> Delete</Button>
               </div>
             </CardContent>
@@ -129,7 +144,7 @@ function ReviewsPage() {
               onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
               disabled={deleteMutation.isPending}
             >
-              {deleteMutation.isPending ? "Deleting…" : "Delete"}
+              {deleteMutation.isPending ? <><Spinner className="mr-1.5 h-4 w-4" /> Deleting…</> : "Delete"}
             </Button>
           </DialogFooter>
         </DialogContent>
