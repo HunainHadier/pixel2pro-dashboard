@@ -140,6 +140,7 @@ function mapReview(row: Row): Review {
     rating: n(row.rating) || 5,
     message: text(row.story || row.message),
     videoUrl: (row.video_url as string | undefined) || undefined,
+    thumbnailUrl: (row.thumbnail_url as string | undefined) || undefined,
     submittedAt: text(row.created_at),
     status: (row.approved ? "approved" : moderationStatus) as Review["status"],
     pinned: Boolean(row.pinned),
@@ -397,6 +398,24 @@ export const api = {
       (await supabaseRequest<Row[]>(query("feedbacks", "select=*&order=created_at.desc"))).map(
         mapReview,
       ),
+    create: async (r: Review) => {
+      const rows = await supabaseRequest<Row[]>(query("feedbacks"), {
+        method: "POST",
+        headers: { Prefer: "return=representation" },
+        body: JSON.stringify({
+          name: r.studentName,
+          track: r.courseName,
+          rating: r.rating,
+          story: r.message,
+          video_url: r.videoUrl || null,
+          thumbnail_url: r.thumbnailUrl || null,
+          approved: r.status === "approved",
+          moderation_status: r.status,
+          pinned: r.pinned ?? false,
+        }),
+      });
+      return mapReview(rows[0]);
+    },
     update: async (id: string, patch: Partial<Review>) => {
       const row = await update("feedbacks", id, {
         ...(patch.status !== undefined && {
@@ -423,7 +442,10 @@ export const api = {
         ),
         fetchCourseMap(),
       ]);
-      const stats = new Map<string, { students: number; revenue: number; confirmed: number; total: number }>();
+      const stats = new Map<
+        string,
+        { students: number; revenue: number; confirmed: number; total: number }
+      >();
       enrollRows.forEach((er) => {
         const course = resolveCourse(courseMap, er);
         if (!course) return;
@@ -441,7 +463,8 @@ export const api = {
       return rows.map((row) => {
         const id = text(row.id);
         const s = stats.get(id);
-        const completion = s && s.total > 0 ? Math.round((s.confirmed / s.total) * 100) : n(row.completion_rate);
+        const completion =
+          s && s.total > 0 ? Math.round((s.confirmed / s.total) * 100) : n(row.completion_rate);
         return mapCourse({
           ...row,
           students: s?.students ?? 0,

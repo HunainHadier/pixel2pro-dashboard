@@ -91,6 +91,7 @@ export interface Review {
   rating: number;
   message: string;
   videoUrl?: string;
+  thumbnailUrl?: string;
   submittedAt: string;
   status: ReviewStatus;
   pinned?: boolean;
