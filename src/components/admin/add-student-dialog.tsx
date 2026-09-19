@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/select";
 import { api } from "@/services/api";
 import type { Course } from "@/lib/mock-data";
+import { getFeePlans } from "@/lib/mock-data";
 import { toast } from "sonner";
 
 interface Props {
@@ -37,6 +38,7 @@ export function AddStudentDialog({ open, onClose, courses }: Props) {
     phone: "",
     city: "",
     courseId: "",
+    feePlanId: "lump-sum",
     governmentId: "",
     professionalProfile: "",
     guardianName: "",
@@ -46,20 +48,29 @@ export function AddStudentDialog({ open, onClose, courses }: Props) {
     termsAccepted: true,
   });
 
+  const selectedCourse = courses.find((c) => c.id === form.courseId);
+  const feePlans = selectedCourse ? getFeePlans(selectedCourse) : [];
+  const selectedFeePlan =
+    feePlans.find((p) => p.id === form.feePlanId) ??
+    feePlans.find((p) => p.type === "lump-sum") ??
+    feePlans[0];
+
   const mutation = useMutation({
     mutationFn: () => {
-      const course = courses.find((c) => c.id === form.courseId);
-      const monthlyFee = course?.monthlyFee ?? 0;
-      const months = parseInt(course?.duration || "") || 1;
-      const courseFee = monthlyFee > 0 ? monthlyFee * months : (course?.price ?? 0);
+      const months = parseInt(selectedCourse?.duration || "") || 1;
+      const totalFee =
+        selectedFeePlan?.totalFee ??
+        (selectedCourse
+          ? (selectedCourse.monthlyFee || 0) * months || selectedCourse.price || 0
+          : 0);
       return api.enrollments.create({
         name: form.name,
         email: form.email,
         phone: form.phone,
         city: form.city,
         courseId: form.courseId,
-        courseName: course?.courseName || "",
-        totalFee: courseFee,
+        courseName: selectedCourse?.courseName || "",
+        totalFee,
         admissionStatus: "pending",
         termsAccepted: form.termsAccepted,
         governmentId: form.governmentId,
@@ -80,6 +91,7 @@ export function AddStudentDialog({ open, onClose, courses }: Props) {
         phone: "",
         city: "",
         courseId: "",
+        feePlanId: "lump-sum",
         governmentId: "",
         professionalProfile: "",
         guardianName: "",
@@ -132,7 +144,10 @@ export function AddStudentDialog({ open, onClose, courses }: Props) {
           </div>
           <div>
             <Label>Course *</Label>
-            <Select value={form.courseId} onValueChange={(v) => setForm({ ...form, courseId: v })}>
+            <Select
+              value={form.courseId}
+              onValueChange={(v) => setForm({ ...form, courseId: v, feePlanId: "lump-sum" })}
+            >
               <SelectTrigger>
                 <SelectValue placeholder="Select course" />
               </SelectTrigger>
@@ -145,6 +160,37 @@ export function AddStudentDialog({ open, onClose, courses }: Props) {
               </SelectContent>
             </Select>
           </div>
+          {feePlans.length > 0 && (
+            <div>
+              <Label>Payment Plan *</Label>
+              <Select
+                value={form.feePlanId}
+                onValueChange={(v) => setForm({ ...form, feePlanId: v })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select payment plan" />
+                </SelectTrigger>
+                <SelectContent>
+                  {feePlans.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.title} — PKR {p.totalFee.toLocaleString()}
+                      {p.registrationFee > 0
+                        ? ` (reg ${p.registrationFee.toLocaleString()})`
+                        : " (no reg fee)"}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {selectedFeePlan && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Total fee: PKR {selectedFeePlan.totalFee.toLocaleString()}
+                  {selectedFeePlan.registrationFee > 0
+                    ? ` incl. registration PKR ${selectedFeePlan.registrationFee.toLocaleString()}`
+                    : " — no registration fee"}
+                </p>
+              )}
+            </div>
+          )}
           <div>
             <Label>Government ID</Label>
             <Input
@@ -186,7 +232,13 @@ export function AddStudentDialog({ open, onClose, courses }: Props) {
             Cancel
           </Button>
           <Button onClick={() => mutation.mutate()} disabled={mutation.isPending || !valid}>
-            {mutation.isPending ? <><Spinner className="mr-1.5 h-4 w-4" /> Creating…</> : "Create Student"}
+            {mutation.isPending ? (
+              <>
+                <Spinner className="mr-1.5 h-4 w-4" /> Creating…
+              </>
+            ) : (
+              "Create Student"
+            )}
           </Button>
         </DialogFooter>
       </DialogContent>

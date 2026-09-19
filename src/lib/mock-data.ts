@@ -3,6 +3,26 @@ export type FeeStatus = "unpaid" | "partial" | "paid" | "overdue";
 export type PaymentStatus = "pending" | "verified" | "rejected";
 export type PaymentMethod = "JazzCash" | "EasyPaisa" | "Bank Transfer" | "Cash" | "Card";
 export type ReviewStatus = "pending" | "approved" | "rejected";
+export type FeePlanType = "monthly" | "lump-sum" | "installment";
+
+export interface FeeInstallment {
+  label: string;
+  amount: number;
+  note?: string;
+}
+
+export interface FeePlan {
+  id: string;
+  type: FeePlanType;
+  title: string;
+  totalFee: number;
+  registrationFee: number;
+  monthlyFee?: number;
+  months?: number;
+  installments?: FeeInstallment[];
+  badge?: string;
+  note?: string;
+}
 
 export interface Course {
   id: string;
@@ -25,6 +45,7 @@ export interface Course {
   hoursPerClass: number;
   admissionFee?: number;
   monthlyFee: number;
+  feePlans?: FeePlan[];
   track?: string;
   programName?: string;
   sessions?: string;
@@ -131,4 +152,243 @@ export function formatDateTime(date: string | Date) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+// ---------------------------------------------------------------------------
+// Fee policy: the current payment structure for every program.
+// Every program: 5,000/month + 5,000 admission.
+// Next-Gen Developer (4 months): lump-sum 16,000 (reg 0) | 2 installments 18,000 (reg 2,000)
+// AI Foundation (2 months):        lump-sum 8,000 (reg 0)   | monthly 5,000/month + 5,000 reg
+// Digital Marketing (3 months):    lump-sum 12,000 (reg 0)  | 2 installments 16,000 (reg 2,000)
+// Shopify (2 months):              lump-sum 8,000 (reg 0)   | monthly 5,000/month + 5,000 reg
+// ---------------------------------------------------------------------------
+const NEXTGEN_PLANS: FeePlan[] = [
+  {
+    id: "monthly",
+    type: "monthly",
+    title: "Monthly Fee",
+    totalFee: 25000,
+    registrationFee: 5000,
+    monthlyFee: 5000,
+    months: 4,
+  },
+  {
+    id: "lump-sum",
+    type: "lump-sum",
+    title: "One-Time Payment",
+    totalFee: 16000,
+    registrationFee: 0,
+    badge: "Best Value",
+    note: "No registration fee",
+  },
+  {
+    id: "installment",
+    type: "installment",
+    title: "2 Installments",
+    totalFee: 18000,
+    registrationFee: 2000,
+    badge: "Flexible",
+    installments: [
+      {
+        label: "Before course starts",
+        amount: 10000,
+        note: "Course fee 8,000 + registration 2,000",
+      },
+      { label: "Start of 2nd month", amount: 8000 },
+    ],
+  },
+];
+
+const AI_PLANS: FeePlan[] = [
+  {
+    id: "monthly",
+    type: "monthly",
+    title: "Monthly Fee",
+    totalFee: 15000,
+    registrationFee: 5000,
+    monthlyFee: 5000,
+    months: 2,
+  },
+  {
+    id: "lump-sum",
+    type: "lump-sum",
+    title: "One-Time Payment",
+    totalFee: 8000,
+    registrationFee: 0,
+    badge: "Best Value",
+    note: "No registration fee",
+  },
+];
+
+const DIGITAL_PLANS: FeePlan[] = [
+  {
+    id: "monthly",
+    type: "monthly",
+    title: "Monthly Fee",
+    totalFee: 20000,
+    registrationFee: 5000,
+    monthlyFee: 5000,
+    months: 3,
+  },
+  {
+    id: "lump-sum",
+    type: "lump-sum",
+    title: "One-Time Payment",
+    totalFee: 12000,
+    registrationFee: 0,
+    badge: "Best Value",
+    note: "No registration fee",
+  },
+  {
+    id: "installment",
+    type: "installment",
+    title: "2 Installments",
+    totalFee: 16000,
+    registrationFee: 2000,
+    badge: "Flexible",
+    installments: [
+      { label: "Before course starts", amount: 9000 },
+      { label: "Start of 2nd month", amount: 7000 },
+    ],
+  },
+];
+
+const SHOPIFY_PLANS: FeePlan[] = [
+  {
+    id: "monthly",
+    type: "monthly",
+    title: "Monthly Fee",
+    totalFee: 15000,
+    registrationFee: 5000,
+    monthlyFee: 5000,
+    months: 2,
+  },
+  {
+    id: "lump-sum",
+    type: "lump-sum",
+    title: "One-Time Payment",
+    totalFee: 8000,
+    registrationFee: 0,
+    badge: "Best Value",
+    note: "No registration fee",
+  },
+];
+
+const normalizePlanKey = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+export function defaultFeePlansFor(
+  courseName: string,
+  months = 1,
+  monthlyFee = 0,
+  admissionFee = 0,
+): FeePlan[] {
+  const key = normalizePlanKey(courseName);
+  if (key.includes("next")) return NEXTGEN_PLANS;
+  if (key.includes("digital")) return DIGITAL_PLANS;
+  if (key.startsWith("ai") || key.includes("freelanc")) return AI_PLANS;
+  if (key.includes("shopify")) return SHOPIFY_PLANS;
+  if (monthlyFee > 0) {
+    return [
+      {
+        id: "monthly",
+        type: "monthly",
+        title: "Monthly Fee",
+        totalFee: monthlyFee * months + admissionFee,
+        registrationFee: admissionFee,
+        monthlyFee,
+        months,
+      },
+    ];
+  }
+  return [];
+}
+
+export function parseFeePlans(raw: unknown): FeePlan[] | undefined {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  const valid = raw.filter(
+    (p): p is FeePlan =>
+      !!p &&
+      typeof p === "object" &&
+      typeof (p as FeePlan).type === "string" &&
+      ["monthly", "lump-sum", "installment"].includes((p as FeePlan).type) &&
+      typeof (p as FeePlan).totalFee === "number",
+  );
+  return valid.length ? valid : undefined;
+}
+
+export function getFeePlans(
+  course: Pick<Course, "courseName" | "duration" | "monthlyFee" | "admissionFee" | "feePlans">,
+): FeePlan[] {
+  if (course.feePlans && course.feePlans.length) return course.feePlans;
+  const months = parseInt(course.duration || "") || 1;
+  return defaultFeePlansFor(
+    course.courseName,
+    months,
+    course.monthlyFee || 0,
+    course.admissionFee ?? 0,
+  );
+}
+
+export interface FeeSettings {
+  lumpSumTotal: number;
+  installmentEnabled: boolean;
+  installmentRegistration: number;
+  installments: FeeInstallment[];
+}
+
+export function feeSettingsFromPlans(plans: FeePlan[] | undefined): FeeSettings {
+  const lump = (plans ?? []).find((p) => p.type === "lump-sum");
+  const inst = (plans ?? []).find((p) => p.type === "installment");
+  return {
+    lumpSumTotal: lump?.totalFee ?? 0,
+    installmentEnabled: !!inst,
+    installmentRegistration: inst?.registrationFee ?? 0,
+    installments: inst?.installments ?? [],
+  };
+}
+
+export function feePlansFromSettings(
+  s: FeeSettings,
+  monthlyFee: number,
+  admissionFee: number,
+  months: number,
+): FeePlan[] {
+  const plans: FeePlan[] = [];
+  const monthlyTotal = monthlyFee * months + admissionFee;
+  plans.push({
+    id: "monthly",
+    type: "monthly",
+    title: "Monthly Fee",
+    totalFee: monthlyTotal,
+    registrationFee: admissionFee,
+    monthlyFee,
+    months,
+  });
+  if (s.lumpSumTotal > 0) {
+    plans.push({
+      id: "lump-sum",
+      type: "lump-sum",
+      title: "One-Time Payment",
+      totalFee: s.lumpSumTotal,
+      registrationFee: 0,
+      badge: "Best Value",
+      note: "No registration fee",
+    });
+  }
+  if (s.installmentEnabled && s.installments.length > 0) {
+    const courseTotal = s.installments.reduce(
+      (sum, i) => sum + Math.max(0, Number(i.amount) || 0),
+      0,
+    );
+    plans.push({
+      id: "installment",
+      type: "installment",
+      title: `${s.installments.length} Installments`,
+      totalFee: courseTotal,
+      registrationFee: s.installmentRegistration,
+      badge: "Flexible",
+      installments: s.installments,
+    });
+  }
+  return plans;
 }

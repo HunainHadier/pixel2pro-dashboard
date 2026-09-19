@@ -1,5 +1,5 @@
 import type { Activity, Course, Payment, Review, Student } from "@/lib/mock-data";
-import { formatDate } from "@/lib/mock-data";
+import { formatDate, parseFeePlans, defaultFeePlansFor } from "@/lib/mock-data";
 import { supabaseRequest } from "@/lib/supabase";
 
 type Row = Record<string, unknown>;
@@ -62,9 +62,13 @@ function mapStudent(row: Row): Student {
   };
 }
 function mapCourse(row: Row): Course {
+  const courseName = text(row.course_name);
+  const months = parseInt(text(row.duration, "1")) || 1;
+  const monthly = n(row.monthly_fee);
+  const admission = row.admission_fee != null ? n(row.admission_fee) : undefined;
   return {
     id: text(row.id),
-    courseName: text(row.course_name),
+    courseName,
     category: text(row.category, "General"),
     duration: text(row.duration, "1 month"),
     level: text(row.level, "Beginner") as Course["level"],
@@ -81,8 +85,11 @@ function mapCourse(row: Row): Course {
     completionRate: n(row.completion_rate),
     classesPerWeek: n(row.classes_per_week) || 3,
     hoursPerClass: n(row.hours_per_class) || 1.5,
-    admissionFee: row.admission_fee != null ? n(row.admission_fee) : undefined,
-    monthlyFee: n(row.monthly_fee),
+    admissionFee: admission,
+    monthlyFee: monthly,
+    feePlans:
+      parseFeePlans(row.fee_plans) ??
+      defaultFeePlansFor(courseName, months, monthly, admission ?? 0),
     track: row.track != null ? text(row.track) : undefined,
     programName: row.program_name != null ? text(row.program_name) : undefined,
     sessions: row.sessions != null ? text(row.sessions) : undefined,
@@ -163,9 +170,16 @@ function resolveCourse(courseMap: Map<string, Row>, row: Row): Row | null {
 function computeTotalFee(row: Row, course: Row | null): number {
   let total = n(row.total_fee);
   if (total <= 0 && course) {
-    const mf = n(course.monthly_fee);
+    const name = text(course.course_name);
     const months = parseInt(text(course.duration, "1")) || 1;
-    total = mf > 0 ? mf * months : n(course.price);
+    const monthly = n(course.monthly_fee);
+    const admission = course.admission_fee != null ? n(course.admission_fee) : 0;
+    const plans =
+      parseFeePlans(course.fee_plans) ?? defaultFeePlansFor(name, months, monthly, admission);
+    const lump = plans.find((p) => p.type === "lump-sum");
+    if (lump) total = lump.totalFee;
+    else if (monthly > 0) total = monthly * months;
+    else total = n(course.price);
   }
   return total;
 }
@@ -176,6 +190,17 @@ const sanitize = (obj: Row): Row => {
   }
   return clean;
 };
+let feePlansColumnAvailable: boolean | null = null;
+export async function feePlansStorageAvailable(): Promise<boolean> {
+  if (feePlansColumnAvailable !== null) return feePlansColumnAvailable;
+  try {
+    await supabaseRequest<Row[]>(query("courses", "select=fee_plans&limit=1"));
+    feePlansColumnAvailable = true;
+  } catch {
+    feePlansColumnAvailable = false;
+  }
+  return feePlansColumnAvailable;
+}
 const update = async (table: string, id: string, patch: Row) =>
   supabaseRequest<Row[]>(query(table, `id=eq.${id}`), {
     method: "PATCH",
@@ -474,6 +499,8 @@ export const api = {
       });
     },
     create: async (c: Course) => {
+      const feePlansField =
+        c.feePlans && (await feePlansStorageAvailable()) ? { fee_plans: c.feePlans } : {};
       const rows = await supabaseRequest<Row[]>(query("courses"), {
         method: "POST",
         headers: { Prefer: "return=representation" },
@@ -506,11 +533,16 @@ export const api = {
           curriculum: c.curriculum,
           impact_headline: c.impactHeadline,
           impact_metrics: c.impactMetrics,
+          ...feePlansField,
         }),
       });
       return mapCourse(rows[0]);
     },
     update: async (id: string, c: Partial<Course>) => {
+      const feePlansField =
+        c.feePlans !== undefined && (await feePlansStorageAvailable())
+          ? { fee_plans: c.feePlans }
+          : {};
       const rows = await update("courses", id, {
         ...(c.courseName !== undefined && { course_name: c.courseName }),
         ...(c.category !== undefined && { category: c.category }),
@@ -540,6 +572,7 @@ export const api = {
         ...(c.curriculum !== undefined && { curriculum: c.curriculum }),
         ...(c.impactHeadline !== undefined && { impact_headline: c.impactHeadline }),
         ...(c.impactMetrics !== undefined && { impact_metrics: c.impactMetrics }),
+        ...feePlansField,
       });
       return rows[0] ? mapCourse(rows[0]) : undefined;
     },
