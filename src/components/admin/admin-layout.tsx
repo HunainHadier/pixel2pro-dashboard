@@ -49,17 +49,29 @@ const nav = [
 function Logo() {
   return (
     <div className="flex items-center gap-2.5">
-      <img src="/logo.png" alt="Pixel2Pro" className="h-9 w-9 shrink-0 rounded-xl bg-white object-contain p-1 shadow-sm" />
+      <img
+        src="/logo.png"
+        alt="Pixel2Pro"
+        className="h-9 w-9 shrink-0 rounded-xl bg-white object-contain p-1 shadow-sm"
+      />
       <div className="min-w-0 leading-tight">
         <div className="truncate font-black tracking-tight">PIXEL2PRO</div>
-        <div className="truncate text-[10px] uppercase tracking-widest text-muted-foreground">Admin Portal</div>
+        <div className="truncate text-[10px] uppercase tracking-widest text-muted-foreground">
+          Admin Portal
+        </div>
       </div>
     </div>
   );
 }
 
 function NotificationsBell() {
-  const { data } = useQuery({ queryKey: ["dashboard"], queryFn: () => api.dashboard(), refetchInterval: 30000 });
+  const [open, setOpen] = useState(false);
+  const { data } = useQuery({
+    queryKey: ["notifications-bell"],
+    queryFn: () => api.dashboard(),
+    enabled: open,
+    staleTime: 60_000,
+  });
   const students = data?.students ?? [];
   const payments = data?.payments ?? [];
   const reviews = data?.reviews ?? [];
@@ -91,12 +103,14 @@ function NotificationsBell() {
   ].slice(0, 8);
 
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
         <Button variant="ghost" size="icon" className="relative shrink-0">
           <Bell className="h-4 w-4" />
           {count > 0 && (
-            <Badge className="absolute -right-1 -top-1 h-4 min-w-4 rounded-full p-0 px-1 text-[10px]">{count}</Badge>
+            <Badge className="absolute -right-1 -top-1 h-4 min-w-4 rounded-full p-0 px-1 text-[10px]">
+              {count}
+            </Badge>
           )}
         </Button>
       </DropdownMenuTrigger>
@@ -104,15 +118,19 @@ function NotificationsBell() {
         <DropdownMenuLabel>Notifications</DropdownMenuLabel>
         <DropdownMenuSeparator />
         {items.length === 0 ? (
-          <div className="px-3 py-6 text-center text-sm text-muted-foreground">You're all caught up.</div>
-        ) : items.map((item) => (
-          <DropdownMenuItem asChild key={item.key} className="flex-col items-start gap-0.5">
-            <Link to={item.href}>
-              <span className="text-sm font-medium">{item.title}</span>
-              <span className="text-xs text-muted-foreground">{item.detail}</span>
-            </Link>
-          </DropdownMenuItem>
-        ))}
+          <div className="px-3 py-6 text-center text-sm text-muted-foreground">
+            You're all caught up.
+          </div>
+        ) : (
+          items.map((item) => (
+            <DropdownMenuItem asChild key={item.key} className="flex-col items-start gap-0.5">
+              <Link to={item.href}>
+                <span className="text-sm font-medium">{item.title}</span>
+                <span className="text-xs text-muted-foreground">{item.detail}</span>
+              </Link>
+            </DropdownMenuItem>
+          ))
+        )}
         {count > items.length && (
           <>
             <DropdownMenuSeparator />
@@ -126,8 +144,16 @@ function NotificationsBell() {
   );
 }
 
-export function AdminLayout({ children, title, subtitle }: { children: ReactNode; title: string; subtitle?: string }) {
-  const pathname = useRouterState({ select: s => s.location.pathname });
+export function AdminLayout({
+  children,
+  title,
+  subtitle,
+}: {
+  children: ReactNode;
+  title: string;
+  subtitle?: string;
+}) {
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [mobileOpen, setMobileOpen] = useState(false);
   const { session } = useSession();
   const { theme, toggle } = useTheme();
@@ -148,7 +174,7 @@ export function AdminLayout({ children, title, subtitle }: { children: ReactNode
         <div className="px-2 pb-1.5 pt-2 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
           Overview
         </div>
-        {nav.map(item => {
+        {nav.map((item) => {
           const active = pathname === item.to || pathname.startsWith(item.to + "/");
           const Icon = item.icon;
           return (
@@ -163,7 +189,12 @@ export function AdminLayout({ children, title, subtitle }: { children: ReactNode
                   : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
               )}
             >
-              <Icon className={cn("h-4 w-4 shrink-0", active ? "" : "text-muted-foreground group-hover:text-foreground")} />
+              <Icon
+                className={cn(
+                  "h-4 w-4 shrink-0",
+                  active ? "" : "text-muted-foreground group-hover:text-foreground",
+                )}
+              />
               <span className="truncate">{item.label}</span>
             </Link>
           );
@@ -194,14 +225,21 @@ export function AdminLayout({ children, title, subtitle }: { children: ReactNode
 
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-border bg-background/80 px-3 backdrop-blur-md sm:h-16 sm:px-4 sm:gap-3">
-          <Button variant="ghost" size="icon" className="lg:hidden shrink-0" onClick={() => setMobileOpen(o => !o)}>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="lg:hidden shrink-0"
+            onClick={() => setMobileOpen((o) => !o)}
+          >
             {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </Button>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <h1 className="truncate text-base font-bold tracking-tight sm:text-lg">{title}</h1>
             </div>
-            {subtitle && <p className="hidden truncate text-xs text-muted-foreground sm:block">{subtitle}</p>}
+            {subtitle && (
+              <p className="hidden truncate text-xs text-muted-foreground sm:block">{subtitle}</p>
+            )}
           </div>
 
           <div className="hidden items-center gap-2 rounded-lg border border-border bg-muted/50 px-3 py-1.5 text-sm text-muted-foreground md:flex md:w-48 lg:w-72">
@@ -216,7 +254,13 @@ export function AdminLayout({ children, title, subtitle }: { children: ReactNode
           </div>
 
           <div className="flex items-center gap-1 sm:gap-2">
-            <Button variant="ghost" size="icon" className="shrink-0" onClick={toggle} aria-label="Toggle theme">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="shrink-0"
+              onClick={toggle}
+              aria-label="Toggle theme"
+            >
               {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </Button>
 
@@ -230,16 +274,25 @@ export function AdminLayout({ children, title, subtitle }: { children: ReactNode
                     <AvatarFallback>AD</AvatarFallback>
                   </Avatar>
                   <div className="hidden text-left sm:block">
-                    <div className="text-xs font-semibold leading-tight">{session?.name ?? "Admin"}</div>
-                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{session?.role.replace("_", " ") ?? "admin"}</div>
+                    <div className="text-xs font-semibold leading-tight">
+                      {session?.name ?? "Admin"}
+                    </div>
+                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                      {session?.role.replace("_", " ") ?? "admin"}
+                    </div>
                   </div>
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuLabel className="truncate">{session?.email}</DropdownMenuLabel>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem asChild><Link to="/settings">Profile & Settings</Link></DropdownMenuItem>
-                <DropdownMenuItem onSelect={doLogout} className="text-destructive focus:text-destructive">
+                <DropdownMenuItem asChild>
+                  <Link to="/settings">Profile & Settings</Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={doLogout}
+                  className="text-destructive focus:text-destructive"
+                >
                   <LogOut className="mr-2 h-4 w-4" /> Sign out
                 </DropdownMenuItem>
               </DropdownMenuContent>

@@ -66,7 +66,7 @@ import {
 } from "recharts";
 import { api } from "@/services/api";
 import { formatPKR, formatDate, type Payment } from "@/lib/mock-data";
-import { generatePaymentSlip } from "@/lib/payment-slip";
+import { generatePaymentSlip, openSlipTab } from "@/lib/payment-slip";
 import { SafeChart } from "@/components/safe-chart";
 import { toast } from "sonner";
 
@@ -82,6 +82,12 @@ function PaymentsPage() {
     queryKey: ["payments"],
     queryFn: () => api.payments.list(),
   });
+  const { data: unpaidData } = useQuery({
+    queryKey: ["students"],
+    queryFn: () => api.enrollments.list(),
+  });
+  const unpaidStudents = (unpaidData ?? []).filter((s) => s.paidAmount < s.totalFee).length;
+  const paidOffStudents = (unpaidData ?? []).filter((s) => s.paidAmount >= s.totalFee).length;
   const [q, setQ] = useState("");
   const [method, setMethod] = useState("all");
   const [status, setStatus] = useState("all");
@@ -123,7 +129,9 @@ function PaymentsPage() {
         new Date(p.paymentDate).getFullYear() === new Date().getFullYear(),
     )
     .reduce((a, b) => a + b.amount, 0);
-  const overdue = list.filter((p) => Math.max(0, p.totalFee - p.paidAmount) > p.totalFee * 0.6).length;
+  const overdue = list.filter(
+    (p) => Math.max(0, p.totalFee - p.paidAmount) > p.totalFee * 0.6,
+  ).length;
 
   const revenueTrend = useMemo(() => {
     const months = [];
@@ -207,12 +215,22 @@ function PaymentsPage() {
     }
   };
 
-  const openSlip = (url?: string) => {
-    if (!url) {
-      toast.error("No saved slip for this payment");
-      return;
-    }
-    window.open(url, "_blank");
+  const openSlip = (p: Payment) => {
+    openSlipTab({
+      studentName: p.studentName,
+      courseName: p.courseName,
+      amount: p.amount,
+      totalFee: p.totalFee,
+      paidAmount: p.paidAmount,
+      paymentMethod: p.paymentMethod,
+      transactionId: p.transactionId,
+      paymentDate: p.paymentDate,
+      status: p.status,
+      type: p.paymentType,
+      slipId: p.id,
+      monthlyFee: p.courseMonthlyFee,
+      months: p.courseMonths,
+    });
   };
 
   const exportCSV = () => {
@@ -245,8 +263,13 @@ function PaymentsPage() {
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard label="Total Revenue" value={formatPKR(revenue)} icon={Wallet} tone="success" />
         <StatCard label="Monthly Income" value={formatPKR(monthly)} icon={TrendingUp} tone="info" />
-        <StatCard label="Pending Dues" value={formatPKR(pendingDues)} icon={Clock} tone="warning" />
-        <StatCard label="Overdue Students" value={overdue} icon={AlertTriangle} tone="warning" />
+        <StatCard label="Unpaid Students" value={unpaidStudents} icon={Clock} tone="warning" />
+        <StatCard
+          label="Paid Off Students"
+          value={paidOffStudents}
+          icon={AlertTriangle}
+          tone="success"
+        />
       </div>
 
       <Card className="mt-6 rounded-2xl">
@@ -419,10 +442,7 @@ function PaymentsPage() {
                             )}{" "}
                             Reject
                           </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onSelect={() => openSlip(p.slipUrl)}
-                            disabled={!p.slipUrl}
-                          >
+                          <DropdownMenuItem onSelect={() => openSlip(p)} disabled={!p.slipUrl}>
                             <FileText className="mr-2 h-4 w-4" /> View slip
                           </DropdownMenuItem>
                           <DropdownMenuItem
@@ -506,7 +526,13 @@ function PaymentsPage() {
               onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
               disabled={deleteMutation.isPending}
             >
-              {deleteMutation.isPending ? <><Spinner className="mr-1.5 h-4 w-4" /> Deleting…</> : "Delete"}
+              {deleteMutation.isPending ? (
+                <>
+                  <Spinner className="mr-1.5 h-4 w-4" /> Deleting…
+                </>
+              ) : (
+                "Delete"
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -534,7 +560,7 @@ function EditPaymentDialog({
     refNo: "",
     date: "",
     status: "pending",
-    type: "monthly" as "admission" | "monthly",
+    type: "monthly" as Payment["paymentType"],
   });
 
   useEffect(() => {
@@ -570,6 +596,24 @@ function EditPaymentDialog({
           <DialogDescription>Update payment details.</DialogDescription>
         </DialogHeader>
         <div className="grid grid-cols-1 gap-4 mt-4">
+          {payment && (
+            <div className="rounded-xl bg-muted p-3 text-xs text-muted-foreground space-y-1">
+              <div className="flex justify-between">
+                <span>Total Fee</span>
+                <span className="font-bold text-foreground">{formatPKR(payment.totalFee)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Paid amount</span>
+                <span className="font-bold">{formatPKR(payment.paidAmount)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Remaining</span>
+                <span className="font-bold">
+                  {formatPKR(Math.max(0, payment.totalFee - payment.paidAmount))}
+                </span>
+              </div>
+            </div>
+          )}
           <div>
             <Label>Amount (PKR)</Label>
             <Input
@@ -613,7 +657,7 @@ function EditPaymentDialog({
             <Label>Payment Type</Label>
             <Select
               value={form.type}
-              onValueChange={(v) => setForm({ ...form, type: v as "admission" | "monthly" })}
+              onValueChange={(v) => setForm({ ...form, type: v as Payment["paymentType"] })}
             >
               <SelectTrigger>
                 <SelectValue />
@@ -621,6 +665,8 @@ function EditPaymentDialog({
               <SelectContent>
                 <SelectItem value="admission">Admission Fee</SelectItem>
                 <SelectItem value="monthly">Monthly Fee</SelectItem>
+                <SelectItem value="one-time">One-Time Payment</SelectItem>
+                <SelectItem value="installment">Installment</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -643,7 +689,13 @@ function EditPaymentDialog({
             Cancel
           </Button>
           <Button onClick={save} disabled={form.amount <= 0 || !form.refNo || saving}>
-            {saving ? <><Spinner className="mr-1.5 h-4 w-4" /> Saving…</> : "Save"}
+            {saving ? (
+              <>
+                <Spinner className="mr-1.5 h-4 w-4" /> Saving…
+              </>
+            ) : (
+              "Save"
+            )}
           </Button>
         </DialogFooter>
       </DialogContent>

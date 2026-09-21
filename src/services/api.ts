@@ -49,6 +49,7 @@ function mapStudent(row: Row): Student {
     paidAmount,
     courseMonthlyFee: n(row.course_monthly_fee) || undefined,
     courseMonths: n(row.course_months) || undefined,
+    feePlanId: text(row.fee_plan_id),
     governmentId: text(row.government_id),
     professionalProfile: text(row.current_professional_profile),
     termsAccepted: Boolean(row.terms_privacy_accepted),
@@ -87,6 +88,10 @@ function mapCourse(row: Row): Course {
     hoursPerClass: n(row.hours_per_class) || 1.5,
     admissionFee: admission,
     monthlyFee: monthly,
+    itDiscountMonthlyFee:
+      row.it_discount_monthly_fee != null ? n(row.it_discount_monthly_fee) : undefined,
+    itDiscountRegistrationFee:
+      row.it_discount_registration_fee != null ? n(row.it_discount_registration_fee) : undefined,
     feePlans:
       parseFeePlans(row.fee_plans) ??
       defaultFeePlansFor(courseName, months, monthly, admission ?? 0),
@@ -173,12 +178,12 @@ function computeTotalFee(row: Row, course: Row | null): number {
     const name = text(course.course_name);
     const months = parseInt(text(course.duration, "1")) || 1;
     const monthly = n(course.monthly_fee);
-    const admission = course.admission_fee != null ? n(course.admission_fee) : 0;
+    const admission = course.admission_fee != null ? n(course.admission_fee) : 5000;
     const plans =
       parseFeePlans(course.fee_plans) ?? defaultFeePlansFor(name, months, monthly, admission);
-    const lump = plans.find((p) => p.type === "lump-sum");
-    if (lump) total = lump.totalFee;
-    else if (monthly > 0) total = monthly * months;
+    const monthlyPlan = plans.find((p) => p.type === "monthly");
+    if (monthlyPlan) total = monthlyPlan.totalFee;
+    else if (monthly > 0) total = monthly * months + admission;
     else total = n(course.price);
   }
   return total;
@@ -200,6 +205,17 @@ export async function feePlansStorageAvailable(): Promise<boolean> {
     feePlansColumnAvailable = false;
   }
   return feePlansColumnAvailable;
+}
+let feePlanIdColumnAvailable: boolean | null = null;
+export async function feePlanIdStorageAvailable(): Promise<boolean> {
+  if (feePlanIdColumnAvailable !== null) return feePlanIdColumnAvailable;
+  try {
+    await supabaseRequest<Row[]>(query("enrollments", "select=fee_plan_id&limit=1"));
+    feePlanIdColumnAvailable = true;
+  } catch {
+    feePlanIdColumnAvailable = false;
+  }
+  return feePlanIdColumnAvailable;
 }
 const update = async (table: string, id: string, patch: Row) =>
   supabaseRequest<Row[]>(query(table, `id=eq.${id}`), {
@@ -285,6 +301,7 @@ export const api = {
       });
     },
     create: async (s: Partial<Student>) => {
+      const canStorePlan = await feePlanIdStorageAvailable();
       const rows = await supabaseRequest<Row[]>(query("enrollments"), {
         method: "POST",
         headers: { Prefer: "return=representation" },
@@ -305,11 +322,13 @@ export const api = {
           guardian_phone: s.guardian?.phone || null,
           guardian_relation: s.guardian?.relation || null,
           notes: s.notes || null,
+          ...(canStorePlan && { fee_plan_id: s.feePlanId || null }),
         }),
       });
       return mapStudent(rows[0]);
     },
     update: async (id: string, patch: Partial<Student>) => {
+      const canStorePlan = patch.feePlanId === undefined ? true : await feePlanIdStorageAvailable();
       const row = await update("enrollments", id, {
         ...(patch.name !== undefined && { full_name: patch.name }),
         ...(patch.email !== undefined && { email: patch.email }),
@@ -323,6 +342,7 @@ export const api = {
         ...(patch.professionalProfile !== undefined && {
           current_professional_profile: patch.professionalProfile,
         }),
+        ...(patch.feePlanId !== undefined && canStorePlan && { fee_plan_id: patch.feePlanId }),
         ...(patch.guardian?.name !== undefined && { guardian_name: patch.guardian.name }),
         ...(patch.guardian?.phone !== undefined && { guardian_phone: patch.guardian.phone }),
         ...(patch.guardian?.relation !== undefined && {
@@ -385,34 +405,61 @@ export const api = {
       });
     },
     update: async (id: string, patch: Partial<Payment>) => {
-      const row = await update("payments", id, {
+      const build = (paymentType?: Payment["paymentType"]) => ({
         ...(patch.amount !== undefined && { amount: patch.amount }),
         ...(patch.paymentDate !== undefined && { payment_date: patch.paymentDate }),
         ...(patch.paymentMethod !== undefined && { payment_method: patch.paymentMethod }),
         ...(patch.transactionId !== undefined && { reference_number: patch.transactionId }),
         ...(patch.status !== undefined && { status: patch.status }),
-        ...(patch.paymentType !== undefined && { payment_type: patch.paymentType }),
+        ...(paymentType !== undefined && { payment_type: paymentType }),
         ...(patch.slipUrl !== undefined && { slip_url: patch.slipUrl }),
       });
-      return row[0] ? mapPayment(row[0]) : undefined;
+      try {
+        const row = await update("payments", id, build(patch.paymentType));
+        return row[0] ? mapPayment(row[0]) : undefined;
+      } catch (err) {
+        const blocked =
+          (patch.paymentType === "installment" || patch.paymentType === "one-time") &&
+          err instanceof Error &&
+          err.message.includes("payments_payment_type_check");
+        if (!blocked) throw err;
+        const row = await update("payments", id, build("monthly"));
+        const saved = row[0] ? mapPayment(row[0]) : undefined;
+        if (saved) saved.paymentTypeDowngraded = true;
+        return saved;
+      }
     },
     create: async (p: Payment) => {
-      const rows = await supabaseRequest<Row[]>(query("payments"), {
-        method: "POST",
-        headers: { Prefer: "return=representation" },
-        body: JSON.stringify({
-          enrollment_id: p.studentId,
-          amount: p.amount,
-          payment_date: p.paymentDate,
-          payment_method: p.paymentMethod,
-          reference_number: p.transactionId,
-          status: p.status,
-          screenshot_url: p.screenshotUrl,
-          payment_type: p.paymentType,
-          slip_url: p.slipUrl,
-        }),
-      });
-      return mapPayment(rows[0]);
+      const insert = async (paymentType: string) => {
+        const rows = await supabaseRequest<Row[]>(query("payments"), {
+          method: "POST",
+          headers: { Prefer: "return=representation" },
+          body: JSON.stringify({
+            enrollment_id: p.studentId,
+            amount: p.amount,
+            payment_date: p.paymentDate,
+            payment_method: p.paymentMethod,
+            reference_number: p.transactionId,
+            status: p.status,
+            screenshot_url: p.screenshotUrl,
+            payment_type: paymentType,
+            slip_url: p.slipUrl,
+          }),
+        });
+        return mapPayment(rows[0]);
+      };
+      try {
+        return await insert(p.paymentType);
+      } catch (err) {
+        const blocked =
+          (p.paymentType === "installment" || p.paymentType === "one-time") &&
+          err instanceof Error &&
+          err.message.includes("payments_payment_type_check");
+        if (!blocked) throw err;
+        const saved = await insert("monthly");
+        saved.paymentTypeDowngraded = true;
+        return saved;
+      }
     },
     delete: async (id: string) => {
       await supabaseRequest(query("payments", `id=eq.${id}`), { method: "DELETE" });
@@ -521,6 +568,8 @@ export const api = {
           hours_per_class: c.hoursPerClass,
           admission_fee: c.admissionFee ?? null,
           monthly_fee: c.monthlyFee,
+          it_discount_monthly_fee: c.itDiscountMonthlyFee ?? null,
+          it_discount_registration_fee: c.itDiscountRegistrationFee ?? null,
           track: c.track,
           program_name: c.programName,
           sessions: c.sessions,
@@ -560,6 +609,12 @@ export const api = {
         ...(c.hoursPerClass !== undefined && { hours_per_class: c.hoursPerClass }),
         ...(c.admissionFee !== undefined && { admission_fee: c.admissionFee ?? null }),
         ...(c.monthlyFee !== undefined && { monthly_fee: c.monthlyFee }),
+        ...(c.itDiscountMonthlyFee !== undefined && {
+          it_discount_monthly_fee: c.itDiscountMonthlyFee ?? null,
+        }),
+        ...(c.itDiscountRegistrationFee !== undefined && {
+          it_discount_registration_fee: c.itDiscountRegistrationFee ?? null,
+        }),
         ...(c.track !== undefined && { track: c.track }),
         ...(c.programName !== undefined && { program_name: c.programName }),
         ...(c.sessions !== undefined && { sessions: c.sessions }),

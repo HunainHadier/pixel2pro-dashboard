@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/select";
 import { api } from "@/services/api";
 import type { Course } from "@/lib/mock-data";
-import { getFeePlans } from "@/lib/mock-data";
+import { getFeePlans, PROFESSIONAL_PROFILES } from "@/lib/mock-data";
 import { toast } from "sonner";
 
 interface Props {
@@ -71,6 +71,7 @@ export function AddStudentDialog({ open, onClose, courses }: Props) {
         courseId: form.courseId,
         courseName: selectedCourse?.courseName || "",
         totalFee,
+        feePlanId: selectedFeePlan?.id,
         admissionStatus: "pending",
         termsAccepted: form.termsAccepted,
         governmentId: form.governmentId,
@@ -200,10 +201,21 @@ export function AddStudentDialog({ open, onClose, courses }: Props) {
           </div>
           <div>
             <Label>Current Professional Profile</Label>
-            <Input
+            <Select
               value={form.professionalProfile}
-              onChange={(e) => setForm({ ...form, professionalProfile: e.target.value })}
-            />
+              onValueChange={(v) => setForm({ ...form, professionalProfile: v })}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select professional profile" />
+              </SelectTrigger>
+              <SelectContent>
+                {PROFESSIONAL_PROFILES.map((p) => (
+                  <SelectItem key={p} value={p}>
+                    {p}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div className="sm:col-span-2">
             <Label>Guardian Name</Label>

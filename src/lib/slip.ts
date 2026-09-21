@@ -10,7 +10,7 @@ export interface SlipData {
   transactionId: string;
   paymentDate: string;
   status: string;
-  type: "admission" | "monthly";
+  type: "admission" | "monthly" | "installment" | "one-time";
   slipId: string;
   monthlyFee?: number;
   months?: number;
@@ -34,13 +34,19 @@ function formatPKR(v: number) {
   }).format(v);
 }
 
-const LOGO_URL = "/logo.png";
+const LOGO_URL = typeof window !== "undefined" ? `${window.location.origin}/logo.png` : "/logo.png";
 
-function buildSlipHtml(data: SlipData) {
+export function buildSlipHtml(data: SlipData) {
   const remaining = Math.max(0, data.totalFee - data.paidAmount);
-  const title =
-    data.type === "admission" ? "Admission Fee Payment Slip" : "Monthly Fee Payment Slip";
-  const slipRef = data.type === "admission" ? `ADM-FEE-${data.slipId}` : `MTH-FEE-${data.slipId}`;
+  const typeInfo = {
+    admission: { title: "Admission Fee Payment Slip", ref: "ADM", label: "Admission Fee" },
+    monthly: { title: "Monthly Fee Payment Slip", ref: "MTH", label: "Monthly Fee" },
+    installment: { title: "Installment Payment Slip", ref: "INST", label: "Installment" },
+    "one-time": { title: "One-Time Payment Slip", ref: "ONETIME", label: "One-Time Payment" },
+  } as const;
+  const info = typeInfo[data.type] ?? typeInfo.monthly;
+  const title = info.title;
+  const slipRef = `${info.ref}-FEE-${data.slipId}`;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -89,7 +95,7 @@ function buildSlipHtml(data: SlipData) {
     <div class="row"><div class="label">Payment Date</div><div class="value">${formatDate(data.paymentDate)}</div></div>
     <div class="row"><div class="label">Payment Method</div><div class="value">${data.paymentMethod}</div></div>
     <div class="row"><div class="label">Reference / Transaction ID</div><div class="value" style="font-family:monospace;font-size:12px;">${data.transactionId}</div></div>
-    <div class="row"><div class="label">Payment Type</div><div class="value"><span class="type-badge">${data.type === "admission" ? "Admission Fee" : "Monthly Fee"}</span></div></div>
+    <div class="row"><div class="label">Payment Type</div><div class="value"><span class="type-badge">${info.label}</span></div></div>
     <div class="row"><div class="label">Status</div><div class="value"><span class="status-badge status-${data.status}">${data.status}</span></div></div>
 
     <div class="amount-box">
@@ -125,22 +131,6 @@ export async function generateSlip(
 
   const html = buildSlipHtml(full);
 
-  // Popup blockers often kill window.open when it's called after an async/network
-  // roundtrip (e.g. from onSuccess). Open the preview if allowed, otherwise fall back
-  // to downloading the slip file so generation never silently fails.
-  const w = window.open("", "_blank", "width=650,height=800");
-  if (w) {
-    w.document.write(html);
-    w.document.close();
-  } else {
-    const blob = new Blob([html], { type: "text/html" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `${slipId}.html`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-  }
-
   const blob = new Blob([html], { type: "text/html" });
   const file = new File([blob], `${slipId}.html`, { type: "text/html" });
   try {
@@ -150,4 +140,12 @@ export async function generateSlip(
     console.warn("Slip storage upload failed:", err);
     return "";
   }
+}
+
+export function openSlipTab(data: Omit<SlipData, "slipId"> & { slipId?: string }): void {
+  const slipId = data.slipId || Date.now().toString(36).toUpperCase();
+  const html = buildSlipHtml({ ...data, slipId });
+  const blob = new Blob([html], { type: "text/html" });
+  const url = URL.createObjectURL(blob);
+  window.open(url, "_blank");
 }

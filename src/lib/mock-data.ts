@@ -5,6 +5,16 @@ export type PaymentMethod = "JazzCash" | "EasyPaisa" | "Bank Transfer" | "Cash" 
 export type ReviewStatus = "pending" | "approved" | "rejected";
 export type FeePlanType = "monthly" | "lump-sum" | "installment";
 
+export const PROFESSIONAL_PROFILES = [
+  "Student (CS / IT / Engineering)",
+  "Student (Non-Tech / Business / Arts)",
+  "Working Professional (Developer / Marketer / Corporate Employee)",
+  "Freelancer / Remote Operator",
+  "Business Owner / Agency Founder",
+  "Teacher / Educator / Academic Administrator",
+  "Unemployed / Seeking Transition",
+] as const;
+
 export interface FeeInstallment {
   label: string;
   amount: number;
@@ -45,6 +55,8 @@ export interface Course {
   hoursPerClass: number;
   admissionFee?: number;
   monthlyFee: number;
+  itDiscountMonthlyFee?: number;
+  itDiscountRegistrationFee?: number;
   feePlans?: FeePlan[];
   track?: string;
   programName?: string;
@@ -76,6 +88,7 @@ export interface Student {
   paidAmount: number;
   courseMonthlyFee?: number;
   courseMonths?: number;
+  feePlanId?: string;
   governmentId?: string;
   professionalProfile?: string;
   termsAccepted: boolean;
@@ -101,7 +114,8 @@ export interface Payment {
   status: PaymentStatus;
   screenshotUrl?: string;
   slipUrl?: string;
-  paymentType: "admission" | "monthly";
+  paymentType: "admission" | "monthly" | "installment" | "one-time";
+  paymentTypeDowngraded?: boolean;
 }
 
 export interface Review {
@@ -152,6 +166,19 @@ export function formatDateTime(date: string | Date) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+export function paymentTypeLabel(type: Payment["paymentType"]): string {
+  switch (type) {
+    case "admission":
+      return "Admission";
+    case "monthly":
+      return "Monthly";
+    case "installment":
+      return "Installment";
+    case "one-time":
+      return "One-Time";
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -317,16 +344,62 @@ export function parseFeePlans(raw: unknown): FeePlan[] | undefined {
 }
 
 export function getFeePlans(
-  course: Pick<Course, "courseName" | "duration" | "monthlyFee" | "admissionFee" | "feePlans">,
+  course:
+    | Pick<Partial<Course>, "courseName" | "duration" | "monthlyFee" | "admissionFee" | "feePlans">
+    | undefined,
 ): FeePlan[] {
+  if (!course) return [];
   if (course.feePlans && course.feePlans.length) return course.feePlans;
   const months = parseInt(course.duration || "") || 1;
   return defaultFeePlansFor(
-    course.courseName,
+    course.courseName || "",
     months,
     course.monthlyFee || 0,
     course.admissionFee ?? 0,
   );
+}
+
+export function resolveStudentFeePlan(
+  student: Pick<Student, "feePlanId" | "totalFee">,
+  course: Pick<
+    Partial<Course>,
+    "courseName" | "duration" | "monthlyFee" | "admissionFee" | "feePlans"
+  >,
+): FeePlan | undefined {
+  const plans = getFeePlans(course);
+  return (
+    plans.find((p) => p.id === student.feePlanId) ??
+    plans.find((p) => p.totalFee === student.totalFee) ??
+    plans.find((p) => p.type === "lump-sum") ??
+    plans[0]
+  );
+}
+
+export function admissionInfo(
+  student: Pick<Student, "paidAmount">,
+  plan: FeePlan | undefined,
+  hasSeparateAdmissionPayment: boolean,
+  recordedAmount?: number,
+): { paid: boolean; applicable: boolean; label: string } {
+  if (!plan || plan.type === "monthly") {
+    return {
+      paid: hasSeparateAdmissionPayment,
+      applicable: true,
+      label: hasSeparateAdmissionPayment ? "Admission: ✓ Paid" : "Admission: Not paid",
+    };
+  }
+  if (plan.type === "installment") {
+    const covered =
+      Math.max(recordedAmount ?? 0, student.paidAmount ?? 0) >= (plan.registrationFee ?? 0);
+    return {
+      paid: covered,
+      applicable: true,
+      label: covered
+        ? "Admission: ✓ Paid (inside Installment 1)"
+        : "Admission: Pending (inside Installment 1)",
+    };
+  }
+  return { paid: true, applicable: false, label: "Admission: ✓ Paid (included in one-time fee)" };
 }
 
 export interface FeeSettings {

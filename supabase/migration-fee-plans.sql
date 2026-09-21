@@ -10,8 +10,17 @@
 --   Digital Marketing (3 mo):    lump-sum 12,000 (reg 0) | 2 installments 16,000 (reg 2,000)
 --   Shopify (2 mo):              lump-sum 8,000 (reg 0)
 
--- 1) New column
+-- 1) New columns
 ALTER TABLE public.courses ADD COLUMN IF NOT EXISTS fee_plans jsonb NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE public.enrollments ADD COLUMN IF NOT EXISTS fee_plan_id text;
+
+-- 1b) Allow all payment types used by the new fee structure.
+-- The original constraint (migration-v2) only allowed 'admission' and 'monthly',
+-- which made installment / one-time payments fail with:
+--   new row for relation "payments" violates check constraint "payments_payment_type_check"
+ALTER TABLE public.payments DROP CONSTRAINT IF EXISTS payments_payment_type_check;
+ALTER TABLE public.payments ADD CONSTRAINT payments_payment_type_check
+  CHECK (payment_type IN ('admission', 'monthly', 'installment', 'one-time'));
 
 -- 2) Base fee columns -> current policy
 UPDATE public.courses SET

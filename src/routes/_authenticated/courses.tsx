@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Plus, Pencil, Trash2, Eye, EyeOff, BookOpen, Users, TrendingUp } from "lucide-react";
+import { Plus, Pencil, Trash2, Eye, EyeOff, BookOpen, Users, TrendingUp, BadgeCheck } from "lucide-react";
 import { AdminLayout } from "@/components/admin/admin-layout";
 import { StatusBadge } from "@/components/admin/badges";
 import { Spinner } from "@/components/admin/spinner";
@@ -234,7 +234,11 @@ function Stat({ icon: Icon, label, value }: { icon: typeof Users; label: string;
 
 const headlineFee = (c: Course) => {
   const plans = getFeePlans(c);
-  return plans.find((p) => p.type === "lump-sum")?.totalFee ?? c.price;
+  return (
+    plans.find((p) => p.type === "monthly")?.totalFee ??
+    plans.find((p) => p.type === "lump-sum")?.totalFee ??
+    c.price
+  );
 };
 
 function FeeStructureBlock({
@@ -328,14 +332,15 @@ function CourseFormDialog({
     form.monthlyFee ??
     initial?.monthlyFee ??
     (price > 0 && durationMonths > 0 ? Math.ceil(price / durationMonths) : 5000);
+  const monthlyFeeEffective = c.monthlyFee ?? monthlyFee;
   const admissionFeeEffective = c.admissionFee ?? 5000;
+  const courseTotal = monthlyFeeEffective * durationMonths + admissionFeeEffective;
   const derivedFeePlans = feePlansFromSettings(
     feeSettings,
-    c.monthlyFee ?? monthlyFee,
+    monthlyFeeEffective,
     admissionFeeEffective,
     durationMonths,
   );
-  const savedPrice = feeSettings.lumpSumTotal > 0 ? feeSettings.lumpSumTotal : (c.price ?? 0);
 
   return (
     <Dialog
@@ -531,12 +536,55 @@ function CourseFormDialog({
             />
           </div>
           <div>
-            <Label>TOTAL Price (PKR) *</Label>
-            <Input
-              type="number"
-              defaultValue={initial?.price}
-              onChange={(e) => setForm((f) => ({ ...f, price: Number(e.target.value) }))}
-            />
+            <Label>
+              TOTAL Price (PKR){" "}
+              <span className="text-muted-foreground font-normal">— auto-calculated</span>
+            </Label>
+            <Input type="number" value={courseTotal} readOnly disabled className="bg-muted" />
+          </div>
+
+          <div className="sm:col-span-2 rounded-xl border border-indigo-200 bg-indigo-50/40 p-4">
+            <div className="flex items-center gap-2">
+              <BadgeCheck className="h-4 w-4 shrink-0 text-indigo-600" />
+              <p className="text-sm font-bold text-indigo-900">
+                Discount For IT Students &amp; Professionals
+              </p>
+            </div>
+            <p className="mt-1 text-xs text-indigo-700">
+              Shown in the website enroll modal. Set 0 to hide the discount for this program.
+            </p>
+            <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <Label>Monthly Fee (discounted)</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  defaultValue={initial?.itDiscountMonthlyFee ?? 4500}
+                  onChange={(e) =>
+                    setForm((f) => ({
+                      ...f,
+                      itDiscountMonthlyFee:
+                        e.target.value === "" ? 0 : Number(e.target.value),
+                    }))
+                  }
+                />
+              </div>
+              <div>
+                <Label>Registration Fee (discounted)</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  defaultValue={initial?.itDiscountRegistrationFee ?? 3000}
+                  onChange={(e) =>
+                    setForm((f) => ({
+                      ...f,
+                      itDiscountRegistrationFee:
+                        e.target.value === "" ? 0 : Number(e.target.value),
+                    }))
+                  }
+                />
+              </div>
+            </div>
           </div>
 
           <div className="sm:col-span-2">
@@ -696,7 +744,7 @@ function CourseFormDialog({
                 if (initial) {
                   await api.courses.update(initial.id, {
                     ...c,
-                    price: savedPrice,
+                    price: courseTotal,
                     feePlans: derivedFeePlans,
                   });
                   toast.success("Course updated");
@@ -707,7 +755,7 @@ function CourseFormDialog({
                     category: c.category ?? "General",
                     duration: c.duration ?? "1 month",
                     level: (c.level ?? "Beginner") as Course["level"],
-                    price: savedPrice,
+                    price: courseTotal,
                     discount: c.discount ?? 0,
                     status: (c.status ?? "draft") as Course["status"],
                     description: c.description ?? "",
@@ -722,6 +770,8 @@ function CourseFormDialog({
                     hoursPerClass: c.hoursPerClass ?? 1.5,
                     admissionFee: admissionFeeEffective,
                     monthlyFee: c.monthlyFee ?? monthlyFee,
+                    itDiscountMonthlyFee: c.itDiscountMonthlyFee ?? 4500,
+                    itDiscountRegistrationFee: c.itDiscountRegistrationFee ?? 3000,
                     feePlans: derivedFeePlans,
                   });
                   toast.success("Course created");

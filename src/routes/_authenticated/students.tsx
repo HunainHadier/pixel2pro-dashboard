@@ -20,6 +20,7 @@ import {
   RotateCcw,
   Clock,
   RefreshCw,
+  UserPlus,
 } from "lucide-react";
 import { AdminLayout } from "@/components/admin/admin-layout";
 import { StatusBadge } from "@/components/admin/badges";
@@ -64,8 +65,20 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { api } from "@/services/api";
-import { formatPKR, formatDate, type Student, type Payment } from "@/lib/mock-data";
-import { generatePaymentSlip } from "@/lib/payment-slip";
+import {
+  formatPKR,
+  formatDate,
+  paymentTypeLabel,
+  getFeePlans,
+  resolveStudentFeePlan,
+  admissionInfo,
+  PROFESSIONAL_PROFILES,
+  type Student,
+  type Payment,
+  type FeePlan,
+} from "@/lib/mock-data";
+import { generatePaymentSlip, openSlipTab } from "@/lib/payment-slip";
+import { AddStudentDialog } from "@/components/admin/add-student-dialog";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_authenticated/students")({
@@ -94,7 +107,10 @@ function StudentsPage() {
   const [notesValue, setNotesValue] = useState("");
   const [overrideStudent, setOverrideStudent] = useState<Student | null>(null);
   const [overrideReason, setOverrideReason] = useState("");
-  const [statusBusy, setStatusBusy] = useState<Student["admissionStatus"] | "notes" | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const [statusBusy, setStatusBusy] = useState<
+    Student["admissionStatus"] | "notes" | "plan" | null
+  >(null);
   const pageSize = 8;
 
   const { data: paymentsData } = useQuery({
@@ -163,6 +179,35 @@ function StudentsPage() {
       qc.invalidateQueries({ queryKey: ["students"] });
     },
     onError: () => toast.error("Failed to save remarks"),
+    onSettled: () => setStatusBusy(null),
+  });
+
+  const planMutation = useMutation({
+    mutationFn: ({
+      id,
+      feePlanId,
+      totalFee,
+    }: {
+      id: string;
+      feePlanId: string;
+      totalFee: number;
+    }) =>
+      api.enrollments.update(id, {
+        feePlanId,
+        ...(totalFee > 0 && { totalFee }),
+      }),
+    onMutate: ({ feePlanId, totalFee }) => {
+      setStatusBusy("plan");
+      setSelected((prev) =>
+        prev ? { ...prev, feePlanId, ...(totalFee > 0 && { totalFee }) } : prev,
+      );
+    },
+    onSuccess: () => {
+      toast.success("Payment plan updated");
+      qc.invalidateQueries({ queryKey: ["students"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+    },
+    onError: () => toast.error("Failed to update payment plan"),
     onSettled: () => setStatusBusy(null),
   });
 
@@ -335,6 +380,9 @@ function StudentsPage() {
             <Button variant="outline" size="sm" onClick={() => window.print()}>
               <Printer className="mr-1.5 h-4 w-4" /> Print
             </Button>
+            <Button size="sm" onClick={() => setAddOpen(true)} className="ml-auto sm:ml-0">
+              <UserPlus className="mr-1.5 h-4 w-4" /> Add Student
+            </Button>
           </div>
         </div>
 
@@ -404,22 +452,54 @@ function StudentsPage() {
                     <TableCell className="hidden lg:table-cell">
                       <div className="flex flex-col gap-1">
                         <StatusBadge status={s.feeStatus} />
-                        <span className="text-xs text-muted-foreground">
-                          {formatPKR(Math.max(0, s.totalFee - s.paidAmount))} left
-                        </span>
-                        <span
-                          className={`text-[10px] ${(paymentsData ?? []).some((p) => p.studentId === s.id && p.paymentType === "admission" && p.status !== "rejected") ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}`}
-                        >
-                          Admission:{" "}
-                          {(paymentsData ?? []).some(
+                        {(() => {
+                          const sPendingSum = (paymentsData ?? [])
+                            .filter((p) => p.studentId === s.id && p.status === "pending")
+                            .reduce((acc, p) => acc + p.amount, 0);
+                          const sLeft = Math.max(0, s.totalFee - s.paidAmount - sPendingSum);
+                          return (
+                            <span className="text-xs text-muted-foreground">
+                              {formatPKR(sLeft)} left
+                              {sPendingSum > 0 && (
+                                <span className="text-amber-600 dark:text-amber-400">
+                                  {" "}
+                                  (incl. {formatPKR(sPendingSum)} pending)
+                                </span>
+                              )}
+                            </span>
+                          );
+                        })()}
+                        {(() => {
+                          const sCourse = (coursesData ?? []).find((c) => c.id === s.courseId);
+                          const sPlan = sCourse ? resolveStudentFeePlan(s, sCourse) : undefined;
+                          const hasAdmission = (paymentsData ?? []).some(
                             (p) =>
                               p.studentId === s.id &&
                               p.paymentType === "admission" &&
                               p.status !== "rejected",
-                          )
-                            ? "✓ Paid"
-                            : "Not paid"}
-                        </span>
+                          );
+                          const sPending = (paymentsData ?? []).filter(
+                            (p) => p.studentId === s.id && p.status === "pending",
+                          );
+                          const sRecorded =
+                            s.paidAmount + sPending.reduce((acc, p) => acc + p.amount, 0);
+                          const adm = admissionInfo(s, sPlan, hasAdmission, sRecorded);
+                          return (
+                            <div className="flex flex-col gap-0.5">
+                              <span
+                                className={`text-[10px] ${adm.paid ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}`}
+                              >
+                                {adm.label}
+                              </span>
+                              {sPending.length > 0 && (
+                                <span className="text-[10px] text-amber-600 dark:text-amber-400">
+                                  {sPending.length} pending ·{" "}
+                                  {formatPKR(sPending.reduce((acc, p) => acc + p.amount, 0))}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </div>
                     </TableCell>
                     <TableCell className="text-right">
@@ -453,30 +533,25 @@ function StudentsPage() {
                                 onSelect={() => doAction("Admission confirmed", s, "confirmed")}
                                 disabled={statusBusy !== null}
                               >
-                                {statusBusy === "confirmed" ? <Spinner className="mr-2 h-4 w-4 text-emerald-500" /> : <CheckCircle2 className="mr-2 h-4 w-4 text-emerald-500" />} Confirm
-                                admission
+                                {statusBusy === "confirmed" ? (
+                                  <Spinner className="mr-2 h-4 w-4 text-emerald-500" />
+                                ) : (
+                                  <CheckCircle2 className="mr-2 h-4 w-4 text-emerald-500" />
+                                )}{" "}
+                                Confirm admission
                               </DropdownMenuItem>
-                            ) : (
-                              <DropdownMenuItem onSelect={() => setOverrideStudent(s)}>
-                                <CheckCircle2 className="mr-2 h-4 w-4 text-amber-500" /> Confirm
-                                without payment
-                              </DropdownMenuItem>
-                            )
+                            ) : null
                           ) : (
                             <DropdownMenuItem
                               onSelect={() => doAction("Admission moved to pending", s, "pending")}
                               disabled={statusBusy !== null}
                             >
-                              {statusBusy === "pending" ? <Spinner className="mr-2 h-4 w-4 text-amber-500" /> : <RotateCcw className="mr-2 h-4 w-4 text-amber-500" />} Unconfirm
-                              (revert to pending)
-                            </DropdownMenuItem>
-                          )}
-                          {s.admissionStatus !== "rejected" && (
-                            <DropdownMenuItem
-                              onSelect={() => doAction("Admission rejected", s, "rejected")}
-                              disabled={statusBusy !== null}
-                            >
-                              {statusBusy === "rejected" ? <Spinner className="mr-2 h-4 w-4 text-rose-500" /> : <XCircle className="mr-2 h-4 w-4 text-rose-500" />} Reject admission
+                              {statusBusy === "pending" ? (
+                                <Spinner className="mr-2 h-4 w-4 text-amber-500" />
+                              ) : (
+                                <RotateCcw className="mr-2 h-4 w-4 text-amber-500" />
+                              )}{" "}
+                              Unconfirm (revert to pending)
                             </DropdownMenuItem>
                           )}
                           <DropdownMenuSeparator />
@@ -539,7 +614,7 @@ function StudentsPage() {
           }
         }}
       >
-        <DialogContent className="max-w-full sm:max-w-4xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-full sm:max-w-6xl max-h-[92vh] overflow-y-auto">
           {selected && (
             <>
               <DialogHeader>
@@ -584,7 +659,6 @@ function StudentsPage() {
                   <Field label="Phone (WhatsApp)" value={selected.phone || "N/A"} />
                   <Field label="City" value={selected.city} />
                   <Field label="Course" value={selected.courseName} />
-                  <Field label="Course ID" value={selected.courseId || "N/A"} />
                   <Field label="Enrollment date" value={formatDate(selected.enrollmentDate)} />
                   <Field label="Admission status" value={selected.admissionStatus} />
                   <Field label="Fee status" value={selected.feeStatus} />
@@ -606,32 +680,151 @@ function StudentsPage() {
                       <div>
                         <p className="text-muted-foreground">Remaining</p>
                         <p className="mt-0.5 text-sm font-bold text-rose-600 dark:text-rose-400">
-                          {formatPKR(Math.max(0, selected.totalFee - selected.paidAmount))}
+                          {formatPKR(
+                            Math.max(
+                              0,
+                              selected.totalFee -
+                                selected.paidAmount -
+                                (paymentsData ?? [])
+                                  .filter(
+                                    (pp) => pp.studentId === selected.id && pp.status === "pending",
+                                  )
+                                  .reduce((acc, pp) => acc + pp.amount, 0),
+                            ),
+                          )}
                         </p>
                       </div>
                       <div>
                         <p className="text-muted-foreground">Admission Fee</p>
                         <p
-                          className={`mt-0.5 text-sm font-bold ${(paymentsData ?? []).some((pp) => pp.studentId === selected.id && pp.paymentType === "admission" && pp.status !== "rejected") ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}`}
+                          className={`mt-0.5 text-sm font-bold ${(() => {
+                            const dCourse = coursesData?.find((c) => c.id === selected.courseId);
+                            const dPlan = dCourse
+                              ? resolveStudentFeePlan(selected, dCourse)
+                              : undefined;
+                            const hasAdm = (paymentsData ?? []).some(
+                              (pp) =>
+                                pp.studentId === selected.id &&
+                                pp.paymentType === "admission" &&
+                                pp.status !== "rejected",
+                            );
+                            const dRecorded =
+                              selected.paidAmount +
+                              (paymentsData ?? [])
+                                .filter(
+                                  (pp) => pp.studentId === selected.id && pp.status === "pending",
+                                )
+                                .reduce((acc, pp) => acc + pp.amount, 0);
+                            return admissionInfo(selected, dPlan, hasAdm, dRecorded).paid
+                              ? "text-emerald-600 dark:text-emerald-400"
+                              : "text-muted-foreground";
+                          })()}`}
                         >
-                          {(paymentsData ?? []).some(
-                            (pp) =>
-                              pp.studentId === selected.id &&
-                              pp.paymentType === "admission" &&
-                              pp.status !== "rejected",
-                          )
-                            ? "Paid"
-                            : "Not paid"}
+                          {(() => {
+                            const dCourse = coursesData?.find((c) => c.id === selected.courseId);
+                            const dPlan = dCourse
+                              ? resolveStudentFeePlan(selected, dCourse)
+                              : undefined;
+                            const hasAdm = (paymentsData ?? []).some(
+                              (pp) =>
+                                pp.studentId === selected.id &&
+                                pp.paymentType === "admission" &&
+                                pp.status !== "rejected",
+                            );
+                            const dRecorded =
+                              selected.paidAmount +
+                              (paymentsData ?? [])
+                                .filter(
+                                  (pp) => pp.studentId === selected.id && pp.status === "pending",
+                                )
+                                .reduce((acc, pp) => acc + pp.amount, 0);
+                            const dInfo = admissionInfo(selected, dPlan, hasAdm, dRecorded);
+                            return dInfo.applicable ? (dInfo.paid ? "Paid" : "Pending") : "Paid";
+                          })()}
                         </p>
                       </div>
                     </div>
                   </div>
+                  {(() => {
+                    const planCourse = coursesData?.find((c) => c.id === selected.courseId);
+                    const plans = planCourse ? getFeePlans(planCourse) : [];
+                    const currentPlan = planCourse
+                      ? resolveStudentFeePlan(selected, planCourse)
+                      : undefined;
+                    const currentPlanId = currentPlan?.id;
+                    return (
+                      <div className="rounded-xl bg-muted/60 p-3 sm:col-span-2 lg:col-span-3">
+                        <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                          Payment Plan
+                        </p>
+                        {plans.length > 0 ? (
+                          <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+                            <Select
+                              value={currentPlanId ?? ""}
+                              onValueChange={(v) => {
+                                const plan = plans.find((p) => p.id === v);
+                                if (!plan) return;
+                                planMutation.mutate({
+                                  id: selected.id,
+                                  feePlanId: plan.id,
+                                  totalFee: plan.totalFee,
+                                });
+                              }}
+                            >
+                              <SelectTrigger className="sm:max-w-xs">
+                                <SelectValue placeholder="Select payment plan" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {plans.map((p) => (
+                                  <SelectItem key={p.id} value={p.id}>
+                                    {p.title} — PKR {p.totalFee.toLocaleString()}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            {currentPlan && (
+                              <p className="text-xs text-muted-foreground">
+                                {currentPlan.type === "monthly"
+                                  ? `PKR ${currentPlan.monthlyFee?.toLocaleString() ?? ""}/month × ${currentPlan.months ?? ""} months`
+                                  : currentPlan.type === "installment"
+                                    ? `Total PKR ${currentPlan.totalFee.toLocaleString()} across ${currentPlan.installments?.length ?? 0} installments`
+                                    : "Full course fee paid in one payment"}
+                                {currentPlan.note ? ` — ${currentPlan.note}` : ""}
+                              </p>
+                            )}
+                          </div>
+                        ) : (
+                          <p className="mt-2 text-xs text-muted-foreground">
+                            No fee plans configured for this course.
+                          </p>
+                        )}
+                        {currentPlan?.installments && currentPlan.installments.length > 0 && (
+                          <div className="mt-2 grid gap-1.5 text-xs sm:grid-cols-2">
+                            {currentPlan.installments.map((inst, i) => (
+                              <div
+                                key={i}
+                                className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2"
+                              >
+                                <span className="text-muted-foreground">
+                                  Installment {i + 1}
+                                  {inst.label ? ` — ${inst.label}` : ""}
+                                </span>
+                                <span className="font-bold">{formatPKR(inst.amount)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {planMutation.isPending && (
+                          <p className="mt-2 text-xs text-muted-foreground">Saving plan…</p>
+                        )}
+                      </div>
+                    );
+                  })()}
                   <Field label="Government ID" value={selected.governmentId || "N/A"} />
                   <Field
                     label="Professional Profile"
                     value={selected.professionalProfile || "N/A"}
                   />
-                  <Field label="Source Track ID" value={selected.sourceTrackId || "N/A"} />
                   <Field label="Terms Accepted" value={selected.termsAccepted ? "Yes" : "No"} />
                   <div className="sm:col-span-2 lg:col-span-3">
                     <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -732,14 +925,24 @@ function StudentsPage() {
                       disabled={statusBusy !== null}
                       onClick={() => doAction("Admission confirmed", selected, "confirmed")}
                     >
-                      {statusBusy === "confirmed" ? <Spinner className="mr-1.5 h-4 w-4 text-emerald-500" /> : <CheckCircle2 className="mr-1.5 h-4 w-4 text-emerald-500" />} Confirm
+                      {statusBusy === "confirmed" ? (
+                        <Spinner className="mr-1.5 h-4 w-4 text-emerald-500" />
+                      ) : (
+                        <CheckCircle2 className="mr-1.5 h-4 w-4 text-emerald-500" />
+                      )}{" "}
+                      Confirm
                     </Button>
                   ) : (
                     <Button
                       variant="outline"
                       size="sm"
-                      disabled={statusBusy !== null}
+                      disabled={statusBusy !== null || selected.paidAmount >= selected.totalFee}
                       onClick={() => setOverrideStudent(selected)}
+                      title={
+                        selected.paidAmount >= selected.totalFee
+                          ? "Fee is fully paid — use Confirm instead"
+                          : undefined
+                      }
                     >
                       <CheckCircle2 className="mr-1.5 h-4 w-4 text-amber-500" /> Confirm without
                       payment
@@ -752,7 +955,12 @@ function StudentsPage() {
                     disabled={statusBusy !== null}
                     onClick={() => doAction("Admission moved to pending", selected, "pending")}
                   >
-                    {statusBusy === "pending" ? <Spinner className="mr-1.5 h-4 w-4 text-amber-500" /> : <RotateCcw className="mr-1.5 h-4 w-4 text-amber-500" />} Unconfirm
+                    {statusBusy === "pending" ? (
+                      <Spinner className="mr-1.5 h-4 w-4 text-amber-500" />
+                    ) : (
+                      <RotateCcw className="mr-1.5 h-4 w-4 text-amber-500" />
+                    )}{" "}
+                    Unconfirm
                   </Button>
                 )}
                 {selected.admissionStatus !== "rejected" && (
@@ -762,7 +970,12 @@ function StudentsPage() {
                     disabled={statusBusy !== null}
                     onClick={() => doAction("Admission rejected", selected, "rejected")}
                   >
-                    {statusBusy === "rejected" ? <Spinner className="mr-1.5 h-4 w-4 text-rose-500" /> : <XCircle className="mr-1.5 h-4 w-4 text-rose-500" />} Reject
+                    {statusBusy === "rejected" ? (
+                      <Spinner className="mr-1.5 h-4 w-4 text-rose-500" />
+                    ) : (
+                      <XCircle className="mr-1.5 h-4 w-4 text-rose-500" />
+                    )}{" "}
+                    Reject
                   </Button>
                 )}
                 {selected.admissionStatus !== "completed" &&
@@ -773,7 +986,12 @@ function StudentsPage() {
                       disabled={statusBusy !== null}
                       onClick={() => doAction("Suspended", selected, "suspended")}
                     >
-                      {statusBusy === "suspended" ? <Spinner className="mr-1.5 h-4 w-4" /> : <Clock className="mr-1.5 h-4 w-4" />} Suspend
+                      {statusBusy === "suspended" ? (
+                        <Spinner className="mr-1.5 h-4 w-4" />
+                      ) : (
+                        <Clock className="mr-1.5 h-4 w-4" />
+                      )}{" "}
+                      Suspend
                     </Button>
                   )}
                 {selected.admissionStatus !== "completed" &&
@@ -784,7 +1002,12 @@ function StudentsPage() {
                       disabled={statusBusy !== null}
                       onClick={() => doAction("Course completed", selected, "completed")}
                     >
-                      {statusBusy === "completed" ? <Spinner className="mr-1.5 h-4 w-4" /> : <CheckCircle2 className="mr-1.5 h-4 w-4" />} Complete
+                      {statusBusy === "completed" ? (
+                        <Spinner className="mr-1.5 h-4 w-4" />
+                      ) : (
+                        <CheckCircle2 className="mr-1.5 h-4 w-4" />
+                      )}{" "}
+                      Complete
                     </Button>
                   )}
                 <div className="flex-1" />
@@ -812,13 +1035,18 @@ function StudentsPage() {
                     setSelected(null);
                   }}
                 >
-                  {statusBusy === "notes" ? <><Spinner className="mr-1.5 h-4 w-4" /> Saving…</> : <><Send className="mr-1.5 h-4 w-4" /> Save</>}
+                  {statusBusy === "notes" ? (
+                    <>
+                      <Spinner className="mr-1.5 h-4 w-4" /> Saving…
+                    </>
+                  ) : (
+                    <>
+                      <Send className="mr-1.5 h-4 w-4" /> Save
+                    </>
+                  )}
                 </Button>
               </DialogFooter>
-              <div className="mt-2 flex items-center justify-between text-xs text-muted-foreground">
-                <Badge variant="outline" className="rounded-full">
-                  ID: {selected.id}
-                </Badge>
+              <div className="mt-2 flex justify-end text-xs text-muted-foreground">
                 <span>Remaining balance auto-calculated</span>
               </div>
             </>
@@ -834,6 +1062,12 @@ function StudentsPage() {
           setSelected(null);
         }}
         student={selected}
+        courses={coursesData ?? []}
+      />
+
+      <AddStudentDialog
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
         courses={coursesData ?? []}
       />
 
@@ -864,7 +1098,13 @@ function StudentsPage() {
               onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
               disabled={deleteMutation.isPending}
             >
-              {deleteMutation.isPending ? <><Spinner className="mr-1.5 h-4 w-4" /> Deleting…</> : "Delete"}
+              {deleteMutation.isPending ? (
+                <>
+                  <Spinner className="mr-1.5 h-4 w-4" /> Deleting…
+                </>
+              ) : (
+                "Delete"
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -920,7 +1160,13 @@ function StudentsPage() {
                 }
               }}
             >
-              {overrideMutation.isPending ? <><Spinner className="mr-1.5 h-4 w-4" /> Confirming…</> : "Confirm Override"}
+              {overrideMutation.isPending ? (
+                <>
+                  <Spinner className="mr-1.5 h-4 w-4" /> Confirming…
+                </>
+              ) : (
+                "Confirm Override"
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1012,26 +1258,55 @@ function StudentPaymentsTab({
     }
   };
 
-  const openSlip = (url?: string) => {
-    if (!url) {
-      toast.error("No saved slip for this payment");
-      return;
-    }
-    window.open(url, "_blank");
+  const openSlip = (p: Payment) => {
+    openSlipTab({
+      studentName: student.name,
+      courseName: student.courseName,
+      amount: p.amount,
+      totalFee: student.totalFee,
+      paidAmount: student.paidAmount,
+      paymentMethod: p.paymentMethod,
+      transactionId: p.transactionId,
+      paymentDate: p.paymentDate,
+      status: p.status,
+      type: p.paymentType,
+      slipId: p.id,
+      monthlyFee: student.courseMonthlyFee,
+      months: student.courseMonths,
+    });
   };
 
   if (isLoading) return <Skeleton className="h-32 w-full rounded-xl" />;
 
   const remaining = Math.max(0, student.totalFee - student.paidAmount);
+  const pendingList = list.filter((p) => p.status === "pending");
+  const pendingTotal = pendingList.reduce((acc, p) => acc + p.amount, 0);
+  const receivableNow = Math.max(0, remaining - pendingTotal);
+  const overbooked = pendingTotal > remaining;
 
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <p className="text-xs text-muted-foreground">Remaining balance: {formatPKR(remaining)}</p>
+        <p className="text-xs text-muted-foreground">
+          Remaining balance: {formatPKR(receivableNow)}
+          {pendingTotal > 0 && (
+            <span className="text-amber-600 dark:text-amber-400">
+              {" "}
+              · {formatPKR(pendingTotal)} pending recorded
+            </span>
+          )}
+        </p>
         <Button size="sm" onClick={onAddPayment}>
           <Wallet className="mr-1.5 h-4 w-4" /> Record payment
         </Button>
       </div>
+      {overbooked && (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-400">
+          These {pendingList.length} pending payments add up to {formatPKR(pendingTotal)}, exceeding
+          the remaining balance ({formatPKR(remaining)}). Verify one or delete the duplicate —
+          otherwise total paid after verification will exceed the course fee.
+        </div>
+      )}
       {list.length === 0 ? (
         <p className="py-6 text-center text-sm text-muted-foreground">No payments recorded yet.</p>
       ) : (
@@ -1050,7 +1325,7 @@ function StudentPaymentsTab({
               <div className="text-right">
                 <div className="flex items-center gap-2">
                   <Badge variant="outline" className="rounded-full text-[10px]">
-                    {p.paymentType === "admission" ? "Admission" : "Monthly"}
+                    {paymentTypeLabel(p.paymentType)}
                   </Badge>
                   <StatusBadge status={p.status} />
                 </div>
@@ -1058,16 +1333,9 @@ function StudentPaymentsTab({
                   {formatDate(p.paymentDate)}
                 </div>
               </div>
-              {p.slipUrl && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  title="View slip"
-                  onClick={() => openSlip(p.slipUrl)}
-                >
-                  <FileText className="h-4 w-4" />
-                </Button>
-              )}
+              <Button variant="ghost" size="icon" title="View slip" onClick={() => openSlip(p)}>
+                <FileText className="h-4 w-4" />
+              </Button>
               <Button
                 variant="ghost"
                 size="icon"
@@ -1103,6 +1371,7 @@ function StudentPaymentsTab({
         open={!!editingPayment}
         onClose={() => setEditingPayment(null)}
         payment={editingPayment}
+        student={student}
         saving={updatePayment.isPending}
         onSave={(id, patch) => updatePayment.mutate({ id, ...patch })}
       />
@@ -1125,7 +1394,13 @@ function StudentPaymentsTab({
               onClick={() => deletePaymentTarget && deletePayment.mutate(deletePaymentTarget.id)}
               disabled={deletePayment.isPending}
             >
-              {deletePayment.isPending ? <><Spinner className="mr-1.5 h-4 w-4" /> Deleting…</> : "Delete"}
+              {deletePayment.isPending ? (
+                <>
+                  <Spinner className="mr-1.5 h-4 w-4" /> Deleting…
+                </>
+              ) : (
+                "Delete"
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1138,12 +1413,14 @@ function EditPaymentDialog({
   open,
   onClose,
   payment,
+  student,
   onSave,
   saving = false,
 }: {
   open: boolean;
   onClose: () => void;
   payment: Payment | null;
+  student: Student | null;
   onSave: (id: string, patch: Partial<Payment>) => void;
   saving?: boolean;
 }) {
@@ -1153,7 +1430,7 @@ function EditPaymentDialog({
     refNo: "",
     date: "",
     status: "pending",
-    type: "monthly" as "admission" | "monthly",
+    type: "monthly" as Payment["paymentType"],
   });
 
   useEffect(() => {
@@ -1190,6 +1467,24 @@ function EditPaymentDialog({
           <DialogDescription>Update payment details.</DialogDescription>
         </DialogHeader>
         <div className="grid grid-cols-1 gap-4 mt-4">
+          {student && (
+            <div className="rounded-xl bg-muted p-3 text-xs text-muted-foreground space-y-1">
+              <div className="flex justify-between">
+                <span>Total Fee</span>
+                <span className="font-bold text-foreground">{formatPKR(student.totalFee)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Paid amount</span>
+                <span className="font-bold">{formatPKR(student.paidAmount)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Remaining</span>
+                <span className="font-bold">
+                  {formatPKR(Math.max(0, student.totalFee - student.paidAmount))}
+                </span>
+              </div>
+            </div>
+          )}
           <div>
             <Label>Amount (PKR)</Label>
             <Input
@@ -1233,7 +1528,7 @@ function EditPaymentDialog({
             <Label>Payment Type</Label>
             <Select
               value={form.type}
-              onValueChange={(v) => setForm({ ...form, type: v as "admission" | "monthly" })}
+              onValueChange={(v) => setForm({ ...form, type: v as Payment["paymentType"] })}
             >
               <SelectTrigger>
                 <SelectValue />
@@ -1241,6 +1536,8 @@ function EditPaymentDialog({
               <SelectContent>
                 <SelectItem value="admission">Admission Fee</SelectItem>
                 <SelectItem value="monthly">Monthly Fee</SelectItem>
+                <SelectItem value="one-time">One-Time Payment</SelectItem>
+                <SelectItem value="installment">Installment</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -1263,7 +1560,13 @@ function EditPaymentDialog({
             Cancel
           </Button>
           <Button onClick={save} disabled={form.amount <= 0 || !form.refNo || saving}>
-            {saving ? <><Spinner className="mr-1.5 h-4 w-4" /> Saving…</> : "Save"}
+            {saving ? (
+              <>
+                <Spinner className="mr-1.5 h-4 w-4" /> Saving…
+              </>
+            ) : (
+              "Save"
+            )}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -1280,7 +1583,15 @@ function EditStudentDialog({
   open: boolean;
   onClose: () => void;
   student: Student | null;
-  courses: { id: string; courseName: string; price: number; duration?: string; monthlyFee?: number }[];
+  courses: {
+    id: string;
+    courseName: string;
+    price: number;
+    duration?: string;
+    monthlyFee?: number;
+    admissionFee?: number;
+    feePlans?: FeePlan[];
+  }[];
 }) {
   const qc = useQueryClient();
   const [form, setForm] = useState({
@@ -1291,6 +1602,7 @@ function EditStudentDialog({
     courseId: "",
     courseName: "",
     totalFee: 0,
+    feePlanId: "",
     governmentId: "",
     professionalProfile: "",
     guardianName: "",
@@ -1308,6 +1620,7 @@ function EditStudentDialog({
         courseId: student.courseId,
         courseName: student.courseName,
         totalFee: student.totalFee,
+        feePlanId: student.feePlanId || "",
         governmentId: student.governmentId || "",
         professionalProfile: student.professionalProfile || "",
         guardianName: student.guardian?.name || "",
@@ -1316,6 +1629,14 @@ function EditStudentDialog({
       });
     }
   }, [open, student]);
+
+  const selectedCourse = courses.find((c) => c.id === form.courseId);
+  const feePlans = getFeePlans(selectedCourse);
+  const selectedFeePlan =
+    feePlans.find((p) => p.id === form.feePlanId) ??
+    feePlans.find((p) => p.totalFee === form.totalFee) ??
+    feePlans.find((p) => p.type === "lump-sum") ??
+    feePlans[0];
 
   const mutation = useMutation({
     mutationFn: () => {
@@ -1328,6 +1649,7 @@ function EditStudentDialog({
         courseId: form.courseId,
         courseName: form.courseName,
         totalFee: form.totalFee,
+        feePlanId: selectedFeePlan?.id || form.feePlanId || undefined,
         governmentId: form.governmentId,
         professionalProfile: form.professionalProfile,
         guardian: {
@@ -1381,14 +1703,21 @@ function EditStudentDialog({
               value={form.courseId}
               onValueChange={(v) => {
                 const c = courses.find((c) => c.id === v);
-                const months = c?.duration ? parseInt(c.duration) || 1 : 1;
-                const mf = c?.monthlyFee ?? 0;
-                const autoFee = mf > 0 ? mf * months : c?.price || form.totalFee;
+                const plans = getFeePlans(c);
+                const plan =
+                  plans.find((p) => p.id === form.feePlanId) ??
+                  plans.find((p) => p.type === "lump-sum") ??
+                  plans[0];
+                const fallbackFee =
+                  (c?.monthlyFee ?? 0) * (c?.duration ? parseInt(c.duration) || 1 : 1) +
+                    (c?.admissionFee ?? 5000) ||
+                  c?.price ||
+                  0;
                 setForm({
                   ...form,
                   courseId: v,
                   courseName: c?.courseName || "",
-                  totalFee: autoFee,
+                  totalFee: plan?.totalFee ?? fallbackFee,
                 });
               }}
             >
@@ -1403,6 +1732,42 @@ function EditStudentDialog({
                 ))}
               </SelectContent>
             </Select>
+          </div>
+          <div>
+            <Label>Payment Plan</Label>
+            <Select
+              value={selectedFeePlan?.id ?? ""}
+              onValueChange={(v) => {
+                const plan = feePlans.find((p) => p.id === v);
+                if (!plan) return;
+                setForm({
+                  ...form,
+                  feePlanId: plan.id,
+                  totalFee: plan.totalFee,
+                });
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select payment plan" />
+              </SelectTrigger>
+              <SelectContent>
+                {feePlans.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.title} — PKR {p.totalFee.toLocaleString()}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {selectedFeePlan && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                {selectedFeePlan.type === "monthly"
+                  ? `PKR ${selectedFeePlan.monthlyFee?.toLocaleString() ?? ""}/month × ${selectedFeePlan.months ?? ""} months`
+                  : selectedFeePlan.type === "installment"
+                    ? `Total PKR ${selectedFeePlan.totalFee.toLocaleString()} across ${selectedFeePlan.installments?.length ?? 0} installments`
+                    : "Full course fee paid in one payment"}
+                {selectedFeePlan.note ? ` — ${selectedFeePlan.note}` : ""}
+              </p>
+            )}
           </div>
           <div>
             <Label>Total Fee</Label>
@@ -1421,10 +1786,29 @@ function EditStudentDialog({
           </div>
           <div>
             <Label>Professional Profile</Label>
-            <Input
+            <Select
               value={form.professionalProfile}
-              onChange={(e) => setForm({ ...form, professionalProfile: e.target.value })}
-            />
+              onValueChange={(v) => setForm({ ...form, professionalProfile: v })}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select professional profile" />
+              </SelectTrigger>
+              <SelectContent>
+                {form.professionalProfile &&
+                  !PROFESSIONAL_PROFILES.includes(
+                    form.professionalProfile as (typeof PROFESSIONAL_PROFILES)[number],
+                  ) && (
+                    <SelectItem value={form.professionalProfile}>
+                      {form.professionalProfile}
+                    </SelectItem>
+                  )}
+                {PROFESSIONAL_PROFILES.map((p) => (
+                  <SelectItem key={p} value={p}>
+                    {p}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
           <div>
             <Label>Guardian Name</Label>
@@ -1453,7 +1837,13 @@ function EditStudentDialog({
             Cancel
           </Button>
           <Button onClick={() => mutation.mutate()} disabled={mutation.isPending}>
-            {mutation.isPending ? <><Spinner className="mr-1.5 h-4 w-4" /> Saving…</> : "Save Changes"}
+            {mutation.isPending ? (
+              <>
+                <Spinner className="mr-1.5 h-4 w-4" /> Saving…
+              </>
+            ) : (
+              "Save Changes"
+            )}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -1477,15 +1867,20 @@ function AddPaymentDialog({
     duration: string;
     monthlyFee?: number;
     admissionFee?: number;
+    feePlans?: FeePlan[];
   }[];
 }) {
   const qc = useQueryClient();
   const [amount, setAmount] = useState(0);
   const [method, setMethod] = useState("Bank Transfer");
   const [refNo, setRefNo] = useState("");
-  const [type, setType] = useState<"admission" | "monthly">("monthly");
+  const [type, setType] = useState<Payment["paymentType"]>("monthly");
+  const [installmentIndex, setInstallmentIndex] = useState(0);
 
   const course = student ? courses.find((c) => c.id === student.courseId) : undefined;
+
+  const activePlan: FeePlan | undefined =
+    student && course ? resolveStudentFeePlan(student, course) : undefined;
 
   const { data: existingPayments } = useQuery({
     queryKey: ["enrollment-payments", student?.id],
@@ -1496,6 +1891,10 @@ function AddPaymentDialog({
   const hasAdmissionPayment = (existingPayments ?? []).some(
     (p) => p.paymentType === "admission" && p.status !== "rejected",
   );
+
+  const installmentsPaid = (existingPayments ?? []).filter(
+    (p) => p.paymentType === "installment" && p.status !== "rejected",
+  ).length;
 
   const getMonthlyFee = () => {
     if (!student) return 0;
@@ -1533,37 +1932,60 @@ function AddPaymentDialog({
     return `TXN-${ts}-${rand}`;
   };
 
-  const remaining = student ? Math.max(0, student.totalFee - student.paidAmount) : 0;
+  const pendingPayments = (existingPayments ?? []).filter((p) => p.status === "pending");
+  const pendingSum = pendingPayments.reduce((acc, p) => acc + p.amount, 0);
+  const remaining = student ? Math.max(0, student.totalFee - student.paidAmount - pendingSum) : 0;
+  const verifiedRemaining = student ? Math.max(0, student.totalFee - student.paidAmount) : 0;
   const monthlyFee = student ? getMonthlyFee() : 0;
   const admissionFee = student ? getAdmissionFee() : 0;
-  const displayAmount =
-    type === "admission"
-      ? Math.min(admissionFee, remaining)
-      : Math.min(monthlyFee || remaining, remaining);
+  const admissionIncluded = activePlan?.type === "installment" || activePlan?.type === "lump-sum";
+
+  const suggestAmountFor = (t: Payment["paymentType"]): number => {
+    switch (t) {
+      case "admission":
+        return Math.min(admissionFee, remaining);
+      case "one-time":
+        return remaining;
+      case "monthly":
+        return Math.min(monthlyFee || remaining, remaining);
+      case "installment": {
+        const parts = activePlan?.installments;
+        const next = parts && installmentsPaid < parts.length ? parts[installmentsPaid].amount : 0;
+        return next > 0 ? Math.min(next, remaining) : Math.min(monthlyFee || remaining, remaining);
+      }
+    }
+  };
 
   useEffect(() => {
     if (open && student) {
-      const remaining = Math.max(0, student.totalFee - student.paidAmount);
-      const mf = getMonthlyFee();
-      const af = getAdmissionFee();
-      if (hasAdmissionPayment) {
-        setType("monthly");
-        setAmount(Math.min(mf || remaining, remaining));
-      } else {
-        setType("admission");
-        setAmount(Math.min(af, remaining));
-      }
+      const t: Payment["paymentType"] =
+        activePlan?.type === "installment"
+          ? "installment"
+          : activePlan?.type === "lump-sum"
+            ? "one-time"
+            : hasAdmissionPayment
+              ? "monthly"
+              : "admission";
+      setType(t);
+      setInstallmentIndex(
+        Math.min(installmentsPaid, Math.max(0, (activePlan?.installments?.length ?? 1) - 1)),
+      );
+      setAmount(suggestAmountFor(t));
       setMethod("Bank Transfer");
       setRefNo(genRef());
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, type, hasAdmissionPayment]);
+  }, [open, hasAdmissionPayment, activePlan?.type]);
 
   const mutation = useMutation({
     mutationFn: async () => {
       if (!student) throw new Error("No student");
       if (type === "admission" && hasAdmissionPayment)
         throw new Error("Admission fee already paid");
+      if (amount > remaining)
+        throw new Error(
+          `Amount exceeds receivable balance (${formatPKR(remaining)}) — includes already-pending payments.`,
+        );
       const slipUrl = await generatePaymentSlip({
         studentName: student.name,
         courseName: student.courseName,
@@ -1573,7 +1995,7 @@ function AddPaymentDialog({
         paymentMethod: method,
         transactionId: refNo,
         paymentDate: new Date().toISOString(),
-        status: "pending",
+        status: "verified",
         type,
         monthlyFee: student.courseMonthlyFee ?? getMonthlyFee(),
         months: student.courseMonths ?? (parseInt(course?.duration || "") || 1),
@@ -1589,13 +2011,19 @@ function AddPaymentDialog({
         paymentDate: new Date().toISOString(),
         paymentMethod: method as Payment["paymentMethod"],
         transactionId: refNo,
-        status: "pending",
+        status: "verified",
         paymentType: type,
         slipUrl: slipUrl || undefined,
       });
     },
-    onSuccess: () => {
-      toast.success("Payment recorded");
+    onSuccess: (saved) => {
+      if (saved?.paymentTypeDowngraded) {
+        toast.warning(
+          "Recorded as Monthly Fee. Run supabase/migration-fee-plans.sql to enable installment/one-time payment types.",
+        );
+      } else {
+        toast.success("Payment recorded and verified");
+      }
       qc.invalidateQueries({ queryKey: ["students"] });
       qc.invalidateQueries({ queryKey: ["payments"] });
       qc.invalidateQueries({ queryKey: ["dashboard"] });
@@ -1603,11 +2031,10 @@ function AddPaymentDialog({
       setAmount(0);
       onClose();
     },
-    onError: () => toast.error("Failed to record payment"),
+    onError: (err) => toast.error(err instanceof Error ? err.message : "Failed to record payment"),
   });
 
   const months = parseInt(course?.duration || "") || 1;
-  const courseFee = course?.price ?? student?.totalFee ?? 0;
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -1616,44 +2043,148 @@ function AddPaymentDialog({
           <DialogTitle>Add Payment</DialogTitle>
           <DialogDescription>
             Record a payment for <strong>{student?.name}</strong>. Remaining:{" "}
-            {formatPKR((student?.totalFee ?? 0) - (student?.paidAmount ?? 0))}
+            {formatPKR(
+              Math.max(0, (student?.totalFee ?? 0) - (student?.paidAmount ?? 0) - pendingSum),
+            )}
           </DialogDescription>
         </DialogHeader>
         <div className="grid grid-cols-1 gap-4 mt-4">
           {student && (
             <div className="rounded-xl bg-muted p-3 text-xs text-muted-foreground space-y-1">
-              <div>
-                Course fee: {formatPKR(courseFee)} ({months} months × {formatPKR(monthlyFee)}/mo)
+              {activePlan && (
+                <div className="flex justify-between">
+                  <span>Payment Plan</span>
+                  <span className="font-bold text-foreground">{activePlan.title}</span>
+                </div>
+              )}
+              {activePlan?.type === "installment" &&
+                activePlan.installments?.map((inst, i) => (
+                  <div className="flex justify-between" key={i}>
+                    <span>
+                      Installment {i + 1}
+                      {inst.label ? ` (${inst.label})` : ""}
+                    </span>
+                    <span className="font-bold">{formatPKR(inst.amount)}</span>
+                  </div>
+                ))}
+              <div className="flex justify-between">
+                <span>Total Fee</span>
+                <span className="font-bold text-foreground">{formatPKR(student.totalFee)}</span>
               </div>
-              <div>
-                Admission fee: {formatPKR(admissionFee)}{" "}
-                {hasAdmissionPayment ? "✓ Paid" : "— Not paid yet"}
+              <div className="flex justify-between">
+                <span>Paid amount (verified)</span>
+                <span className="font-bold">{formatPKR(student.paidAmount)}</span>
               </div>
+              {pendingSum > 0 && (
+                <div className="flex justify-between">
+                  <span>Pending recorded</span>
+                  <span className="font-bold text-amber-600 dark:text-amber-400">
+                    {formatPKR(pendingSum)}
+                  </span>
+                </div>
+              )}
+              <div className="flex justify-between">
+                <span>Remaining</span>
+                <span className="font-bold">
+                  {formatPKR(Math.max(0, student.totalFee - student.paidAmount - pendingSum))}
+                </span>
+              </div>
+              {pendingSum > 0 && verifiedRemaining > remaining && (
+                <div className="flex justify-between">
+                  <span>Unverified balance</span>
+                  <span className="font-bold">{formatPKR(verifiedRemaining)}</span>
+                </div>
+              )}
+              <div className="border-t border-border/50 pt-1">
+                {activePlan?.type === "monthly" ? (
+                  <>
+                    {formatPKR(monthlyFee)}/month × {months} months + admission{" "}
+                    {formatPKR(admissionFee)}
+                  </>
+                ) : activePlan?.type === "installment" ? (
+                  <>
+                    Registration of {formatPKR(activePlan.registrationFee)} is already included in
+                    Installment 1 — no separate admission payment.
+                  </>
+                ) : (
+                  <>{activePlan?.note || "Full course fee — no separate registration fee."}</>
+                )}
+              </div>
+              {activePlan?.type === "monthly" && (
+                <div>
+                  Admission fee: {formatPKR(admissionFee)}{" "}
+                  {hasAdmissionPayment ? "✓ Paid" : "— Not paid yet"}
+                </div>
+              )}
             </div>
           )}
-          {hasAdmissionPayment && (
+          {hasAdmissionPayment && activePlan?.type === "monthly" && (
             <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-3 text-xs text-emerald-700 dark:text-emerald-400">
-              Admission fee already recorded. You can only add monthly fee payments now.
+              Admission fee already recorded. You can add monthly, installment, or one-time payments
+              now.
             </div>
           )}
           <div>
             <Label>Payment Type</Label>
             <Select
               value={type}
-              onValueChange={(v) => setType(v as "admission" | "monthly")}
-              disabled={hasAdmissionPayment}
+              onValueChange={(v) => {
+                const t = v as Payment["paymentType"];
+                setType(t);
+                if (t === "installment") {
+                  const parts = activePlan?.installments ?? [];
+                  const idx = Math.min(installmentsPaid, Math.max(0, parts.length - 1));
+                  setInstallmentIndex(idx);
+                }
+                setAmount(suggestAmountFor(t));
+              }}
             >
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="admission" disabled={hasAdmissionPayment}>
-                  Admission Fee{hasAdmissionPayment ? " (already paid)" : ""}
+                <SelectItem value="admission" disabled={hasAdmissionPayment || admissionIncluded}>
+                  Admission Fee
+                  {hasAdmissionPayment
+                    ? " (already paid)"
+                    : admissionIncluded
+                      ? " (included in your plan)"
+                      : ""}
                 </SelectItem>
                 <SelectItem value="monthly">Monthly Fee</SelectItem>
+                <SelectItem value="one-time">One-Time Payment</SelectItem>
+                <SelectItem value="installment">Installment</SelectItem>
               </SelectContent>
             </Select>
           </div>
+          {type === "installment" &&
+            activePlan?.installments &&
+            activePlan.installments.length > 0 && (
+              <div>
+                <Label>Installment</Label>
+                <Select
+                  value={String(installmentIndex)}
+                  onValueChange={(v) => {
+                    const i = Number(v);
+                    setInstallmentIndex(i);
+                    const part = activePlan.installments?.[i];
+                    if (part) setAmount(Math.min(part.amount, remaining));
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {activePlan.installments.map((inst, i) => (
+                      <SelectItem key={i} value={String(i)} disabled={i < installmentsPaid}>
+                        Installment {i + 1} — {formatPKR(inst.amount)}
+                        {inst.label ? ` (${inst.label})` : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
           <div>
             <Label>Amount (PKR)</Label>
             <Input
@@ -1693,10 +2224,21 @@ function AddPaymentDialog({
           <Button
             onClick={() => mutation.mutate()}
             disabled={
-              mutation.isPending || amount <= 0 || (type === "admission" && hasAdmissionPayment)
+              mutation.isPending ||
+              amount <= 0 ||
+              amount > remaining ||
+              (type === "admission" && hasAdmissionPayment)
             }
           >
-            {mutation.isPending ? <><Spinner className="mr-1.5 h-4 w-4" /> Recording…</> : "Record Payment"}
+            {mutation.isPending ? (
+              <>
+                <Spinner className="mr-1.5 h-4 w-4" /> Recording…
+              </>
+            ) : amount > remaining ? (
+              "Exceeds Receivable Amount"
+            ) : (
+              "Record Payment"
+            )}
           </Button>
         </DialogFooter>
       </DialogContent>

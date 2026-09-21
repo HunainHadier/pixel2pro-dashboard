@@ -1,4 +1,6 @@
-import { generateSlip } from "@/lib/slip";
+import { generateSlip, openSlipTab } from "@/lib/slip";
+
+export { openSlipTab };
 
 export async function generatePaymentSlip(data: {
   studentName: string;
@@ -10,7 +12,7 @@ export async function generatePaymentSlip(data: {
   transactionId: string;
   paymentDate: string;
   status: string;
-  type?: "admission" | "monthly";
+  type?: "admission" | "monthly" | "installment" | "one-time";
   monthlyFee?: number;
   months?: number;
 }): Promise<string> {
